@@ -60,7 +60,8 @@ class App(AppSpec):
         T.style(b, bg='bg2', fg='fg2')
         b.pack(fill='x')
         if not os_.me:
-            Btn(card, T, 'Sign in', lambda: os_.toast('Not running inside OG Browser.', '⚠️'), kind='pri', size='sm',
+            Btn(card, T, 'Sign in', lambda: os_.open_web({'type': 'og', 'host': 'service.auth', 'path': '/'}), kind='pri',
+                size='sm',
                 bg='bg2').pack(side='right', padx=14)
         grid = tk.Frame(root, bd=0)
         T.style(grid, bg='bg1')

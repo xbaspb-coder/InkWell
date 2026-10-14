@@ -9,6 +9,7 @@ class AppSpec:
     w = 720
     h = 480
     single = False                # only one window at a time
+    hidden = False                # left out of the app lists (opened by other means)
     kw = ''                       # extra words the Inkwell matches
     about = ''
 

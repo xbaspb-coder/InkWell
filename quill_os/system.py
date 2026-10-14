@@ -10,9 +10,11 @@ import traceback
 import webbrowser
 from tkinter import filedialog
 
-from . import audio
+from . import audio, web
 from .apps import load_apps
 from .core import Core, Store, kind_of
+from .galau import Galau
+from .xapps import Store as XStore, register as register_xapps
 from .imaging import HAVE_PIL, photo_from_bytes
 from .ui.desk import Desk, Notes, Ribbon, Spine
 from .ui.eyes import Eyes
@@ -109,6 +111,8 @@ class QuillOS:
         self.theme = Theme(self.root)
         self.theme.apply(self.S['set'])
         self.apps = load_apps()
+        self.galau = Galau(self.core.store.folder)
+        self.xstore = XStore(self.galau, self.core.store.folder, self.S['xapps'])
         self._build_screen()
         self.root.protocol('WM_DELETE_WINDOW', self.on_close)
 
@@ -238,6 +242,7 @@ class QuillOS:
         self.bus.on('notif', lambda _a: self.bell_update())
         self.bus.on('storage-full', lambda _a: self.notify_once(
             'full', 'Storage is full', 'Quill could not save. Delete or export some large files in Atlas.'))
+        register_xapps(self, self.xstore)
         self._bind_global()
         install_touch_scroll(root)
         self.desk_frame.bind('<Configure>', self._desk_resized, add='+')
@@ -574,15 +579,25 @@ class QuillOS:
             return False
 
     def open_web(self, target):
-        """Open a web page. Plain web addresses open in the computer's browser; OG sites
-        and OG search only exist inside OG Browser, which this standalone version is not."""
-        if target.get('type') == 'url' and target.get('url'):
-            try:
-                webbrowser.open(target['url'])
-            except Exception as e:
-                self.toast('Could not open the browser: %s' % e, '⚠️')
+        """Open a web page. OG sites, OG search and the site list open in OG Browser; plain web
+        addresses open in a web window (or the computer's own browser when there is no web engine)."""
+        ok, why = web.available()
+        address = web.og_address(target)
+        if address is not None:
+            if ok:
+                self.wm.open('ogb', {'open': address})
+            else:
+                self.toast('OG Browser needs the web engine, which is not installed.', '⚠️')
             return None
-        self.toast('Not running inside OG Browser.', '⚠️')
+        url = target.get('url') if target.get('type') == 'url' else None
+        if url:
+            if ok:
+                self.wm.open('webpage', {'url': url})
+            else:
+                try:
+                    webbrowser.open(url)
+                except Exception as e:
+                    self.toast('Could not open the browser: %s' % e, '⚠️')
         return None
 
     # ---- pictures
@@ -779,6 +794,9 @@ class QuillOS:
         self.bell_update()
         self.ribbon.clock_text()
         self.eyes.apply()
+        self.xstore.state = self.S['xapps']      # a restored backup brings its own list
+        register_xapps(self, self.xstore)
+        self.spine.render()
 
     def on_close(self):
         """The computer's close button: like Shut down, it asks first while windows are open."""

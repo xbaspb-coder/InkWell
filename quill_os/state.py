@@ -79,6 +79,7 @@ def def_state():
                 'eyes': True, 'eyesCm': 30, 'eyesTrig': 23, 'eyesEcho': 24, 'camUrl': 'http://192.168.4.1'},
         'lyre': {'pat': copy.deepcopy(DEFAULT_PATTERN), 'bpm': 110, 'inst': 'triangle', 'oct': 4},
         'fs': {}, 'notes': [], 'events': {}, 'alarms': [], 'timers': [], 'notifs': [], 'scores': {}, 'hist': [], 'recent': [],
+        'xapps': {},   # installed XApps: id -> name, icon, colour, version …
     }
 
 
@@ -132,7 +133,7 @@ def normalize_state(raw):
         if (not isinstance(pt, list) or len(pt) != 4
                 or any(not isinstance(r, list) or len(r) != 16 for r in pt)):
             s['lyre']['pat'] = copy.deepcopy(DEFAULT_PATTERN)
-        for k in ('fs', 'scores'):
+        for k in ('fs', 'scores', 'xapps'):
             if isinstance(raw.get(k), dict):
                 s[k] = raw[k]
         for k in ('notes', 'alarms', 'timers', 'notifs', 'hist', 'recent'):

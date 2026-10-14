@@ -2,19 +2,24 @@
 
 Inkwell is made of these parts:
 - a Raspberry Pi 3 Model A+, which runs Quill.OS;
-- a 7-inch HDMI touchscreen;
+- a 7-inch HDMI touchscreen and a USB trackpad, joined through a small USB hub;
 - a Bluetooth keyboard;
 - an HC-SR04 distance sensor (the "eyes"), which warns when someone sits too close to the screen;
 - the ELEGOO ESP32 camera module, used by the Iris camera app.
+
+It runs Quill.OS, plus OG Browser (your original OG_Browser.html) and apps from XApps, the app store.
 
 ## 1. Parts list
 
 | Part | Notes |
 |---|---|
 | Raspberry Pi 3 Model A+ | Runs Quill.OS |
-| microSD card, 16–32 GB | Holds the operating system |
+| microSD card, 32 GB or more | Holds the operating system, plus 1 GB of "swap" (see below) |
 | 7-inch HDMI touchscreen | Picture through HDMI, touch through USB |
-| Bluetooth keyboard | The Pi's only USB port is used by the touchscreen |
+| USB trackpad | Works together with the touchscreen |
+| Small USB hub (3–4 ports) | The Pi 3 A+ has only one USB port; the hub gives room for the touchscreen's touch cable, the trackpad and a Wi-Fi adapter |
+| USB Wi-Fi adapter (recommended, about 5–10 €) | Lets the Pi use the camera's Wi-Fi network and your home internet at the same time (see step 6) |
+| Bluetooth keyboard | Leaves the hub's ports free |
 | HC-SR04 distance sensor | Wired to the Pi's GPIO pins |
 | Resistors: one 1 kΩ, one 2 kΩ | Protect the Pi from the sensor's 5 V signal |
 | ELEGOO ESP32 camera module | Powered through its USB-C socket |
@@ -47,6 +52,8 @@ If the repository is private, Git asks you to sign in. You can also download the
 
 The script does the following:
 - installs the graphics system, Python, Tkinter, Pillow and gpiozero;
+- installs the web engine (WebKitGTK) that runs OG Browser and XApps;
+- makes 1 GB of swap on the memory card;
 - turns on automatic login;
 - makes Quill.OS start full screen every time the Pi powers on.
 
@@ -113,7 +120,15 @@ Mount the sensor beside the screen, facing the person using the laptop. Its two 
    sudo nmcli connection modify "ELEGOO-XXXXXXXXXXXX" connection.autoconnect-priority 10
    ```
 
-3. The Pi has only one Wi-Fi radio. While it is connected to the camera, it has **no internet**. Install software (step 3) while it is still on your home Wi-Fi.
+3. The Pi's built-in Wi-Fi can join only one network at a time. While it is connected to the camera, it has **no internet**, so OG Browser and XApps cannot go online. There are two ways to deal with this:
+   - **Recommended: a USB Wi-Fi adapter on the hub.** Keep the built-in Wi-Fi (`wlan0`) on your home network, and connect the adapter (`wlan1`) to the camera:
+
+     ```sh
+     sudo nmcli dev wifi connect "ELEGOO-XXXXXXXXXXXX" ifname wlan1
+     ```
+
+     The camera's network then carries only the camera, and the internet keeps working.
+   - **Without an adapter:** switch networks when you need to. Install software (step 3) while the Pi is still on your home Wi-Fi.
 
 Quill.OS looks for the camera at `http://192.168.4.1`, which is the ELEGOO camera's usual address. You can change it in **Loom → Eyes & camera**.
 
@@ -125,17 +140,31 @@ Quill.OS looks for the camera at `http://192.168.4.1`, which is the ELEGOO camer
 | 7-inch screen | 5 V, about 1 A, through its own USB power socket |
 | ELEGOO camera | 5 V, about 0.5 A, through USB-C |
 
+**About memory:** a bigger memory card does not give the Pi more working memory (RAM), which stays 512 MB. What the card can do is hold *swap*: when the 512 MB is full, the Pi moves things it is not using to the card. The setup script makes 1 GB of swap. This lets OG Browser run next to Quill.OS, but it is slower than real memory: expect pauses when switching between them, and expect LifeCraft and LifeGames (3D games) to run slowly or not at all on a Pi 3 A+.
+
 Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**, and power all three parts from the converter's output. **Never connect the battery straight to the Pi.**
 
 ## 8. Using it
 
 - Restart with `sudo reboot`. Quill.OS starts full screen.
+- **Trackpad:** works at the same time as touch. Click to click; a two-finger tap (or the trackpad's right button) opens menus; two-finger scrolling scrolls.
 - **Touch:**
   - tap to click;
   - **press and hold** for the menus a right-click would open;
   - **drag a finger** up or down to scroll settings and lists.
 - **Distance warning:** if you stay closer than 30 cm for about two seconds, the screen shows "Too close to the screen" until you move back. Change the distance, or turn the warning off, in **Loom → Eyes & camera**. That page also shows the distance live, which helps when testing the wiring.
 - **Camera:** open **Iris** with Ctrl+K and type "Iris". Use **📸 Take photo** to save a picture in Pictures; Lens opens it.
+- **OG Browser:** open it from the Spine or with Ctrl+K. It opens full screen in its own window:
+  - **◀ Quill.OS** (top left) goes back to Quill.OS and keeps OG Browser open in the background;
+  - **Show OG Browser** in its Quill window brings it back;
+  - **✕ Close** ends it and frees its memory.
+
+  Addresses ending in .og typed in Compass, Portal's sites and OG searches from the Inkwell all open in OG Browser. Sign-ins and saved data stay on the laptop.
+- **XApps (the app store):**
+  - **Discover** lists published apps; **Install** downloads one. It then appears in the Inkwell (Ctrl+K) and can be pinned to the Spine.
+  - **Installed** lets you update or remove apps.
+  - **Publish** shares your own apps. Sign in with your Galau account (only verified accounts can publish), make your app as one HTML file in Glyph, then press **New app**.
+  - Apps run in their own window and cannot see the laptop's files.
 - **Other computers:** run Quill.OS normally with `python3 quill.py`. The small-screen layout turns on by itself on screens up to 1024 pixels wide or 640 pixels high. You can force it with `--compact` and `--touch`, or turn it off with `--no-compact` and `--no-touch`.
 
 ## 9. If something does not work
@@ -147,4 +176,7 @@ Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**,
 | "Sensor not found" in Loom | Check the wiring in step 5 and that TRIG and ECHO are not swapped. |
 | Distance always "—" | ECHO is not getting through: check the resistors and the GND wire. |
 | Iris: "The camera is not answering" | Check that the camera has power and that the Pi is connected to the ELEGOO-… network (`nmcli dev status`). |
+| OG Browser or an XApp: "cannot start here" | The web engine is missing: run `sh pi/install.sh` again while connected to the internet. |
+| OG Browser: "could not connect" | The Pi has no internet; it may be on the camera's network (see step 6). |
+| Trackpad or touch stops working | Check the USB hub's cable to the Pi. If the hub has a power socket, power it from the 5 V converter. |
 | Quill.OS closes with an error | Read `~/.quill-x.log`, or run `python3 quill.py` over SSH with `DISPLAY=:0` to see the message. |

@@ -7,7 +7,6 @@ import re
 import tempfile
 import time
 import tkinter as tk
-import webbrowser
 
 from .base import AppSpec, Inst
 from .scribe import bind_mod
@@ -733,8 +732,8 @@ class Glyph:
             fd, path = tempfile.mkstemp(prefix='quill-preview-', suffix='.html')
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(d['text'])
-            webbrowser.open(pathlib.Path(path).as_uri())
-            self.os.toast('Preview opened in your browser', '🌐')
+            self.os.open_web({'type': 'url', 'url': pathlib.Path(path).as_uri()})
+            self.os.toast('Preview opened', '🌐')
             return
         if d['name'].lower().endswith('.json'):
             self.show_cons(True)

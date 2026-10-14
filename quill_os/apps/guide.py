@@ -21,18 +21,20 @@ An operating system made of ink and glass. This guide covers everything.
 | **Atlas** | Files and folders. Drag and drop, copy, cut, paste, rename, Trash, upload, export |
 | **Scribe** | Notes with Markdown and a live preview |
 | **Glyph** | Code editor with highlighting, find and replace, and **Run** for JavaScript, Python, HTML and JSON |
-| **OG Browser** | Opens OG Browser when Quill runs inside it |
+| **OG Browser** | The OG Browser, in its own window. **◀ Quill.OS** comes back here and keeps it open |
 | **Quill Shell** | A command line with pipes, redirects and over 70 commands |
 | **Abacus** | Calculator with a scientific mode and history |
 | **Brush** | Paint with pencil, brush, spray, shapes, fill and undo |
 | **Chrono** | Clock, stopwatch, timers and alarms that ring even when the window is closed |
 | **Lyre** | Piano, a beat maker and a music player for your own files |
 | **Lens** | Image viewer: zoom, rotate, wallpaper |
+| **Iris** | The camera: live picture and photos into Pictures |
+| **XApps** | The app store: install apps people made, or publish your own HTML app |
 | **Almanac** | Calendar with events and reminders |
 | **Arcade** | Snake, 2048 and Minesweeper |
 | **Pulse** | Task manager, performance graphs and services |
 | **Portal** | Jump to Galau Mail, Ferret, LifeCraft, LifeGames and the other OG sites |
-| **Compass** | Opens web pages in your browser |
+| **Compass** | Opens web pages in a web window, and .og sites in OG Browser |
 | **Loom** | Settings: themes, wallpapers, PIN lock, storage, sync |
 
 ## Your files

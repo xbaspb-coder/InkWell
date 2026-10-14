@@ -801,7 +801,8 @@ def _play(c):
 
 @define('apps', 'List apps', 'apps')
 def _apps(c):
-    return '\n'.join(sty('bl', i.ljust(10)) + a.name.ljust(14) + (a.about or '') for i, a in c.host.apps.items())
+    return '\n'.join(sty('bl', i.ljust(10)) + a.name.ljust(14) + (a.about or '') for i, a in c.host.apps.items()
+                     if not a.hidden)
 
 
 _OG_HOST = re.compile(r'^[a-z0-9-]+(\.[a-z0-9-]+)*\.(og|gov|auth|roots|create|os)$', re.I)

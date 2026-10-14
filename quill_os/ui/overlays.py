@@ -488,6 +488,8 @@ class Inkwell:
                     add('Calculator', icon='🧮', label=str(e), sub='', run=lambda: None)
         apps = []
         for id_, a in os_.apps.items():
+            if a.hidden:
+                continue
             s = max(self.score(a.name, q), self.score(a.kw or '', q) * 0.6, self.score(id_, q) * 0.8)
             if s > 0:
                 apps.append((s, id_))

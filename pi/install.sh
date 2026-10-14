@@ -29,6 +29,20 @@ sudo apt-get install -y --no-install-recommends \
 # The GPIO library gpiozero uses on current Raspberry Pi OS (missing on very old releases).
 sudo apt-get install -y python3-lgpio || echo "python3-lgpio is not available here; gpiozero will use another library."
 
+echo "== Installing the web engine for OG Browser and XApps (WebKitGTK)"
+sudo apt-get install -y --no-install-recommends python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 \
+    || sudo apt-get install -y --no-install-recommends python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.0 \
+    || echo "The web engine could not be installed: OG Browser and XApps will not open." >&2
+
+echo "== Adding 1 GB of swap on the memory card (the Pi 3 A+ has only 512 MB of memory)"
+if [ -f /etc/dphys-swapfile ]; then
+    sudo sed -i -e 's/^#\?CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' -e 's/^#\?CONF_MAXSWAP=.*/CONF_MAXSWAP=2048/' /etc/dphys-swapfile
+    grep -q '^CONF_SWAPSIZE=' /etc/dphys-swapfile || echo 'CONF_SWAPSIZE=1024' | sudo tee -a /etc/dphys-swapfile >/dev/null
+    sudo dphys-swapfile setup && sudo dphys-swapfile swapon || echo "Swap could not be resized; it will be after a restart." >&2
+else
+    echo "This system does not use dphys-swapfile; leaving its swap settings as they are."
+fi
+
 echo "== Allowing access to the GPIO pins (for the distance sensor)"
 sudo usermod -aG gpio,video,audio,input "$USER" || true
 
