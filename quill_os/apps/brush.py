@@ -160,12 +160,11 @@ class Brush:
         c.delete('checker')
         w, h = self.raster.w + PAD * 2, self.raster.h + PAD * 2
         c.configure(bg=T['bg1'], scrollregion=(0, 0, w, h))
-        a, b = T['bg2'], T['bg1']
-        for y in range(0, h, 20):
+        a = T['bg2']
+        for y in range(0, h, 20):          # two darker squares per 20 px cell make the checker pattern
             for x in range(0, w, 20):
-                if (x // 10 + y // 10) % 2 == 0:
-                    c.create_rectangle(x, y, x + 10, y + 10, fill=a, outline='', tags='checker')
-                    c.create_rectangle(x + 10, y + 10, x + 20, y + 20, fill=a, outline='', tags='checker')
+                c.create_rectangle(x, y, x + 10, y + 10, fill=a, outline='', tags='checker')
+                c.create_rectangle(x + 10, y + 10, x + 20, y + 20, fill=a, outline='', tags='checker')
         c.tag_lower('checker')
 
     def rebuild_photo(self):

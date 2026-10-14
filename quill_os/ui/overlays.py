@@ -327,15 +327,15 @@ def iconize(n):
 # ================================================================ toasts
 
 class Toasts:
+    """Pop-up notices stacked under the ribbon on the right (newest at the bottom, at most four)."""
+
     def __init__(self, os_):
         self.os = os_
-        self.box = tk.Frame(os_.root, bd=0)
         self.items = []
-        os_.theme.on(self.box, lambda: self.box.configure(bg=os_.theme['bg0']))
 
     def show(self, title, body='', icon='🔔', ms=5000):
         T = self.os.theme
-        t = tk.Frame(self.box, bd=0, highlightthickness=1, cursor='hand2')
+        t = tk.Frame(self.os.root, bd=0, highlightthickness=1, cursor='hand2')
         accent = tk.Frame(t, width=3, bd=0)
         accent.pack(side='left', fill='y')
         ic = tk.Label(t, text=icon, font=T.font('sans', 19), bd=0)
@@ -352,12 +352,12 @@ class Toasts:
         def paint():
             t.configure(bg=T['glass'], highlightbackground=T['line'])
             accent.configure(bg=T['acc'])
-            for w in (ic, col, tl):
-                w.configure(bg=T['glass'], fg=T['fg']) if w is not col else w.configure(bg=T['glass'])
+            col.configure(bg=T['glass'])
+            ic.configure(bg=T['glass'], fg=T['fg'])
+            tl.configure(bg=T['glass'], fg=T['fg'])
             if bl is not None:
                 bl.configure(bg=T['glass'], fg=T['fg2'])
         T.on(t, paint)
-        t.pack(fill='x', pady=(0, 8))
         self.items.append(t)
         while len(self.items) > 4:
             self._kill(self.items[0])
@@ -379,12 +379,14 @@ class Toasts:
             self._place()
 
     def _place(self):
-        if not self.items:
-            self.box.place_forget()
-            return
-        width = min(340, self.os.root.winfo_width() - 24)
-        self.box.place(relx=1.0, x=-12, y=self.os.RIBBON + 10, anchor='ne', width=width)
-        self.box.lift()
+        root = self.os.root
+        width = min(340, root.winfo_width() - 24)
+        y = self.os.RIBBON + 10
+        for t in self.items:
+            t.place(relx=1.0, x=-12, y=y, anchor='ne', width=width)
+            t.lift()
+            t.update_idletasks()
+            y += t.winfo_reqheight() + 8
 
 
 # ================================================================ Inkwell (launcher)

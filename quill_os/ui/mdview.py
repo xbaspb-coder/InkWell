@@ -34,7 +34,6 @@ def setup_tags(T, text):
 
 def render(os_, text, src):
     """Replace the Text widget's content with rendered Markdown."""
-    T = os_.theme
     text.configure(state='normal')
     text.delete('1.0', 'end')
     text._links = {}

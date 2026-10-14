@@ -1,7 +1,6 @@
 """Tests for the non-visual parts of Quill.OS: calculator, Markdown, file system, saving, shell."""
 
 import json
-import math
 import os
 import sys
 import tempfile

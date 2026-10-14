@@ -642,11 +642,14 @@ class PipeOut(PacedThreadOut):
         return True
 
     def _write(self, samples):
+        proc = self.proc
+        if proc is None or not self.alive:
+            return
         try:
-            self.proc.stdin.write(samples.tobytes())
-            self.proc.stdin.flush()
+            proc.stdin.write(samples.tobytes())
+            proc.stdin.flush()
             self.written += len(samples)
-        except (OSError, ValueError):
+        except (OSError, ValueError, AttributeError):
             self._sleep_sink()
 
     def _sleep_sink(self):
@@ -663,6 +666,7 @@ class PipeOut(PacedThreadOut):
 
     def close(self):
         super().close()
+        self.thread.join(timeout=1.0)
         self._sleep_sink()
 
 
@@ -737,6 +741,7 @@ class WinWaveOut(PacedThreadOut):
 
     def close(self):
         super().close()
+        self.thread.join(timeout=1.0)
         try:
             self.winmm.waveOutReset(self.handle)
             for h in self.hdrs:

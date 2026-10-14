@@ -497,7 +497,8 @@ class Glyph:
         self.pos()
 
     def _key(self, e):
-        if e.state & 0x4 or e.state & 0x8 and self.text.tk.call('tk', 'windowingsystem') == 'aqua':
+        ws = self.text.tk.call('tk', 'windowingsystem')
+        if e.state & 0x4 or (e.state & 0x8 and ws == 'aqua'):      # Ctrl, or Command on macOS
             return None
         k = e.char
         ks = e.keysym
@@ -521,7 +522,7 @@ class Glyph:
                 self.replace(v, s - 1, s + 1, '', s - 1)
                 return 'break'
             return None
-        if e.state & 0x20000 or e.state & 0x8 and self.text.tk.call('tk', 'windowingsystem') != 'aqua':
+        if e.state & 0x20000 or (e.state & 0x8 and ws == 'x11'):    # Alt (on Windows 0x8 is Num Lock)
             return None
         if len(k) != 1 or ord(k) < 32:
             return None

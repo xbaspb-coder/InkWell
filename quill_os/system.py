@@ -14,7 +14,6 @@ from . import audio
 from .apps import load_apps
 from .core import Core, Store, kind_of
 from .imaging import HAVE_PIL, photo_from_bytes
-from .state import FIXED
 from .ui.desk import Desk, Notes, Ribbon, Spine
 from .ui.overlays import Boot, Dialogs, Inkwell, Lock, Menu, Panels, PowerOff, Spread, Toasts, setup_wizard
 from .ui.theme import THEME_WALL, Theme
@@ -751,7 +750,11 @@ class QuillOS:
         self.ribbon.clock_text()
 
     def on_close(self):
-        """The computer's close button: save everything and quit."""
+        """The computer's close button: like Shut down, it asks first while windows are open."""
+        if not self.quitting and self.wm.list and not self.dialogs.active and not self.lock.active:
+            if not self.dialogs.confirm('Close Quill.OS?', 'Open windows will be closed. Unsaved changes in them may '
+                                        'be lost.', ok='Close', danger=True):
+                return
         if not self.quitting:
             try:
                 for w in list(self.wm.list):
