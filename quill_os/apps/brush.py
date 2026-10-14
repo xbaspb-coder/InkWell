@@ -10,7 +10,7 @@ from .scribe import bind_mod
 from ..core import kind_of
 from ..imaging import ImageError, Raster, decode_any, png_encode, ppm, scale_rgb
 from ..state import FIXED
-from ..ui.widgets import Btn, Check, Slider
+from ..ui.widgets import Btn, Check, Slider, bar_width
 from ..util import bytes_to_data_url, hex_to_rgb
 
 TOOLS = [('pen', '✏️', 'Pencil'), ('brush', '🖌', 'Soft brush'), ('spray', '💨', 'Spray'), ('eraser', '🧽', 'Eraser'),
@@ -116,8 +116,8 @@ class Brush:
         T.style(stage, bg='bg1')
         stage.pack(side='left', fill='both', expand=True)
         self.cv = tk.Canvas(stage, bd=0, highlightthickness=0, cursor='crosshair', takefocus=1)
-        vb = tk.Scrollbar(stage, orient='vertical', command=self.cv.yview, width=10, bd=0, highlightthickness=0)
-        hb = tk.Scrollbar(stage, orient='horizontal', command=self.cv.xview, width=10, bd=0, highlightthickness=0)
+        vb = tk.Scrollbar(stage, orient='vertical', command=self.cv.yview, width=bar_width(), bd=0, highlightthickness=0)
+        hb = tk.Scrollbar(stage, orient='horizontal', command=self.cv.xview, width=bar_width(), bd=0, highlightthickness=0)
         for sb in (vb, hb):
             T.on(sb, lambda sb=sb: sb.configure(bg=T['bg3'], troughcolor=T['bg1'], activebackground=T['hover']))
         self.cv.configure(yscrollcommand=vb.set, xscrollcommand=hb.set)

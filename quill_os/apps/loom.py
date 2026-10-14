@@ -12,6 +12,7 @@ from ..state import ACCENTS, STORE_LIMIT, normalize_state
 from ..ui.desk import WALLS
 from ..ui.overlays import avatar, setup_wizard, swatches
 from ..ui.theme import THEME_BG, THEME_NAMES
+from ..sensors import camera_base
 from ..ui.widgets import Btn, Entry, ScrollArea, Select, Slider, Switch, tile_image
 from ..util import ago, day_key, fmt_bytes, fmt_date, hash_pin
 
@@ -23,8 +24,9 @@ SHORTCUTS = [('Ctrl+K  or  Alt+Space', 'Open the Inkwell'), ('Alt+1 … Alt+4', 
              ('Ctrl+F', 'Find (Glyph)'), ('Ctrl+/', 'Comment lines (Glyph)'), ('F2', 'Rename (Atlas)'),
              ('Drag to a screen edge', 'Snap a window')]
 PAGES = [('look', '🎨', 'Appearance'), ('display', '🔊', 'Display & sound'), ('account', '☁', 'Account & sync'),
-         ('security', '🔐', 'Security'), ('storage', '💾', 'Storage'), ('system', '⚙', 'System'), ('keys', '⌨', 'Shortcuts'),
-         ('about', 'ℹ', 'About')]
+         ('security', '🔐', 'Security'), ('storage', '💾', 'Storage'), ('sensors', '👀', 'Eyes & camera'),
+         ('system', '⚙', 'System'), ('keys', '⌨', 'Shortcuts'), ('about', 'ℹ', 'About')]
+GPIO_PINS = [4, 5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
 
 
 class App(AppSpec):
@@ -34,7 +36,7 @@ class App(AppSpec):
     bg = ('#9aa4b8', '#4a5468')
     w, h = 800, 560
     single = True
-    kw = 'settings preferences theme wallpaper appearance pin security storage account sync sound display'
+    kw = 'settings preferences theme wallpaper appearance pin security storage account sync sound display eyes distance sensor camera'
     about = 'Settings'
 
     def build(self, ctx):
@@ -511,6 +513,78 @@ class Loom:
             os_.reload_ui()
         self.row('Reset Quill', 'Deletes all files, notes and settings on this computer',
                  lambda p: Btn(p, T, 'Reset…', reset, kind='dng', bg='bg1'))
+
+    def page_sensors(self):
+        T, os_ = self.T, self.os
+        S = os_.S
+        self.h2('Eyes & camera')
+        self.h4('Distance sensor')
+
+        def changed(_v=None):
+            os_.touch()
+            os_.eyes.apply()
+        self.row('Warn when too close', 'Covers the screen while you sit closer than the distance below',
+                 self.switch('eyes', changed))
+
+        def limit_sel(parent):
+            def set_(v):
+                S['set']['eyesCm'] = v
+                changed()
+            return Select(parent, T, [(c, '%d cm' % c) for c in (20, 25, 30, 35, 40, 50, 60)],
+                          S['set'].get('eyesCm', 30), set_, bg='bg1', size='sm')
+        self.row('Warning distance', 'About 30 cm or more is comfortable for a 7-inch screen', limit_sel)
+
+        def live(parent):
+            lbl = tk.Label(parent, font=T.font('sans', 13, 'bold'), bd=0, anchor='e')
+            T.style(lbl, bg='bg1', fg='acc')
+
+            def update():
+                try:
+                    if not lbl.winfo_exists():
+                        return
+                    cm = os_.eyes.distance()
+                    lbl.configure(text='%.0f cm' % cm if cm is not None else '—')
+                    status.configure(text=os_.eyes.status())
+                    lbl.after(500, update)
+                except tk.TclError:
+                    pass
+            lbl.after(10, update)
+            return lbl
+        row = self.row('Distance now', ' ', live)
+        status = row.winfo_children()[0].winfo_children()[1]   # the row's small text, updated with the reading
+
+        def pin_sel(key):
+            def make(parent):
+                def set_(v):
+                    S['set'][key] = v
+                    changed()
+                return Select(parent, T, [(n, 'GPIO %d' % n) for n in GPIO_PINS], S['set'].get(key), set_, bg='bg1',
+                              size='sm')
+            return make
+        self.row('TRIG pin', 'The sensor pin that sends the sound pulse', pin_sel('eyesTrig'))
+        self.row('ECHO pin', 'The sensor pin that hears it come back (through the two resistors)', pin_sel('eyesEcho'))
+        self.p('Wiring with the standard pins: VCC → 5 V (pin 2), GND → GND (pin 6), TRIG → GPIO 23 (pin 16), '
+               'ECHO → 1 kΩ resistor → GPIO 24 (pin 18), and a 2 kΩ resistor from GPIO 24 to GND. The resistors '
+               'protect the Raspberry Pi from the sensor\'s 5 V signal.')
+        self.h4('Camera')
+
+        def url_entry(parent):
+            e = Entry(parent, T, S['set'].get('camUrl', ''), placeholder='http://192.168.4.1', width=22)
+
+            def save(_e=None):
+                v = camera_base(e.get())
+                if v != S['set'].get('camUrl'):
+                    S['set']['camUrl'] = v
+                    os_.touch()
+                    os_.toast('Camera address saved', '📷')
+            e.bind('<Return>', save)
+            e.bind('<FocusOut>', save, add='+')
+            return e
+        self.row('Camera address', 'Where Quill finds the ESP32 camera', url_entry)
+        self.row('Try the camera', None, lambda parent: Btn(parent, T, '📷 Open Iris', lambda: os_.wm.open('iris'),
+                                                            bg='bg1'))
+        self.p('The ELEGOO camera makes its own Wi-Fi network, named ELEGOO- followed by letters and numbers. Connect '
+               'the Raspberry Pi to that network and leave the address as http://192.168.4.1.')
 
     def page_keys(self):
         T = self.T

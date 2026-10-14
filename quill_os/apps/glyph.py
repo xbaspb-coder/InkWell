@@ -14,7 +14,7 @@ from .scribe import bind_mod
 from ..core import kind_of
 from ..highlight import LANG_NAMES, lang_of, spans
 from ..state import FIXED
-from ..ui.widgets import Btn, Check, Entry
+from ..ui.widgets import Btn, Check, Entry, bar_width
 from ..util import ext_of
 
 TAB = '  '
@@ -165,8 +165,8 @@ class Glyph:
         gedge = tk.Frame(self.ed, width=1, bd=0)
         T.style(gedge, bg='line')
         gedge.pack(side='left', fill='y')
-        self.vbar = tk.Scrollbar(self.ed, orient='vertical', width=10, bd=0, highlightthickness=0)
-        self.hbar = tk.Scrollbar(self.ed, orient='horizontal', width=10, bd=0, highlightthickness=0)
+        self.vbar = tk.Scrollbar(self.ed, orient='vertical', width=bar_width(), bd=0, highlightthickness=0)
+        self.hbar = tk.Scrollbar(self.ed, orient='horizontal', width=bar_width(), bd=0, highlightthickness=0)
         for sb in (self.vbar, self.hbar):
             T.on(sb, lambda sb=sb: sb.configure(bg=T['bg3'], troughcolor=T['bg0'], activebackground=T['hover']))
         mono = T.font('mono', 13)

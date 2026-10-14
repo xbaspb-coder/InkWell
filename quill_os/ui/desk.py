@@ -51,11 +51,11 @@ class Desk:
         self._imgs = []
         self._resize_job = None
         self.c.bind('<Configure>', self._on_resize)
-        bind_context(self.c, self._context)
         self.c.bind('<Button-1>', self._click)
         self.c.bind('<Double-Button-1>', self._dbl)
         self.c.bind('<B1-Motion>', self._drag)
         self.c.bind('<ButtonRelease-1>', self._release)
+        bind_context(self.c, self._context)      # after the plain bindings, which would replace its own
         self.c.bind('<Delete>', lambda e: self._key_delete())
         self.c.bind('<Return>', lambda e: self._key_open())
         self.c._drop = self._drop

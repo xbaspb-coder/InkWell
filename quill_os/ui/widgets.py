@@ -11,6 +11,19 @@ from ..util import hex_to_rgb, mix, rgb_to_hex
 
 _TIP = {'win': None, 'job': None}
 
+# Touchscreen mode: wider scroll bars, no hover tooltips, scrolling by dragging a finger.
+# 'scrolled' is true from the moment a finger drag starts scrolling until the finger lifts,
+# so that the button under the finger does not also count it as a tap.
+TOUCH = {'on': False, 'scrolled': False}
+
+
+def set_touch(on):
+    TOUCH['on'] = bool(on)
+
+
+def bar_width():
+    return 22 if TOUCH['on'] else 10
+
 
 # ================================================================ tooltips
 
@@ -19,6 +32,8 @@ def tooltip(widget, text_or_fn, side='right'):
     def show():
         _TIP['job'] = None
         hide()
+        if TOUCH['on']:
+            return
         text = text_or_fn() if callable(text_or_fn) else text_or_fn
         if not text or not widget.winfo_exists():
             return
@@ -214,7 +229,7 @@ class Btn(tk.Label):
             inside = 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height()
         except tk.TclError:
             return
-        if inside and self.command:
+        if inside and self.command and not TOUCH['scrolled']:
             self.command()
 
     def _key(self, _e):
@@ -336,8 +351,10 @@ round_rect = _round_rect
 
 class Slider(tk.Scale):
     def __init__(self, parent, T, frm=0, to=100, value=0, command=None, length=170, bg='bg1'):
-        super().__init__(parent, from_=frm, to=to, orient='horizontal', showvalue=0, length=length, sliderlength=16,
-                         width=10, bd=0, highlightthickness=0, relief='flat', sliderrelief='flat')
+        big = TOUCH['on']   # a handle a finger can hold
+        super().__init__(parent, from_=frm, to=to, orient='horizontal', showvalue=0, length=length,
+                         sliderlength=30 if big else 16, width=22 if big else 10, bd=0, highlightthickness=0,
+                         relief='flat', sliderrelief='flat')
         self.set(value)
         self.T, self.surface = T, bg
         if command:
@@ -418,13 +435,14 @@ def wheel_units(e):
 class ScrollArea(tk.Frame):
     """A vertically scrolling container; put children in `.inner`."""
 
-    def __init__(self, parent, T, bg='bg1', bar=True):
+    def __init__(self, parent, T, bg='bg1', bar=True, drag_scroll=True):
         super().__init__(parent, bd=0, highlightthickness=0)
         self.T, self.surface = T, bg
+        self.drag_scroll = drag_scroll    # a finger drag scrolls it (touch mode)
         self.canvas = tk.Canvas(self, bd=0, highlightthickness=0)
         self.inner = tk.Frame(self.canvas, bd=0)
         self._win = self.canvas.create_window(0, 0, window=self.inner, anchor='nw')
-        self.bar = tk.Scrollbar(self, orient='vertical', command=self.canvas.yview, width=10, bd=0,
+        self.bar = tk.Scrollbar(self, orient='vertical', command=self.canvas.yview, width=bar_width(), bd=0,
                                 highlightthickness=0, relief='flat') if bar else None
         self.canvas.configure(yscrollcommand=self._on_scroll)
         self.canvas.pack(side='left', fill='both', expand=True)
@@ -485,6 +503,67 @@ class ScrollArea(tk.Frame):
                 self.canvas.yview_moveto((y + h - view_h) / total)
         except tk.TclError:
             pass
+
+
+def install_touch_scroll(root):
+    """Let a finger drag scroll the ScrollArea under it, like on a phone.
+
+    Only areas made with drag_scroll=True take part, and never while the finger is on a
+    text field or a slider, which use dragging themselves."""
+    state = {'area': None}
+    skip = ('Entry', 'Text', 'Scale', 'Scrollbar', 'Listbox', 'Spinbox')
+
+    def find(w):
+        while w is not None:
+            try:
+                if w.winfo_class() in skip:
+                    return None
+            except tk.TclError:
+                return None
+            if isinstance(w, ScrollArea):
+                return w if w.drag_scroll else None
+            w = getattr(w, 'master', None)
+        return None
+
+    def press(e):
+        TOUCH['scrolled'] = False
+        state['area'] = None
+        if not TOUCH['on'] or isinstance(e.widget, str):
+            return
+        area = find(e.widget)
+        if area is None:
+            return
+        try:
+            if area.inner.winfo_reqheight() <= area.canvas.winfo_height():
+                return
+            state['area'] = area
+            state['y0'] = e.y_root
+            state['top'] = area.canvas.yview()[0]
+        except tk.TclError:
+            pass
+
+    def move(e):
+        area = state['area']
+        if area is None:
+            return
+        dy = e.y_root - state['y0']
+        if not TOUCH['scrolled'] and abs(dy) < 12:
+            return
+        TOUCH['scrolled'] = True
+        try:
+            total = max(1, area.inner.winfo_reqheight())
+            area.canvas.yview_moveto(max(0.0, state['top'] - dy / total))
+        except tk.TclError:
+            state['area'] = None
+
+    def release(_e):
+        state['area'] = None
+        # Cleared after every other release handler has seen it.
+        root.after_idle(lambda: TOUCH.update(scrolled=False))
+
+    root.bind_all('<ButtonPress-1>', press, add='+')
+    root.bind_all('<B1-Motion>', move, add='+')
+    root.bind_all('<ButtonRelease-1>', release, add='+')
 
 
 # ================================================================ tabs

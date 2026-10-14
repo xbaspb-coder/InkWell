@@ -4,6 +4,7 @@ import tkinter as tk
 
 from .. import markdown
 from ..util import data_url_to_bytes
+from .widgets import bar_width
 
 
 def setup_tags(T, text):
@@ -140,7 +141,7 @@ def make_view(os_, parent, bg='bg1', padx=24, pady=18):
     T.style(frame, bg=bg)
     text = tk.Text(frame, wrap='word', bd=0, highlightthickness=0, padx=padx, pady=pady, font=T.font('sans', 14),
                    cursor='arrow', spacing1=1, spacing3=1, width=1, height=1)
-    bar = tk.Scrollbar(frame, orient='vertical', command=text.yview, width=10, bd=0, highlightthickness=0)
+    bar = tk.Scrollbar(frame, orient='vertical', command=text.yview, width=bar_width(), bd=0, highlightthickness=0)
     text.configure(yscrollcommand=bar.set)
     T.on(text, lambda: text.configure(bg=T[bg], fg=T['fg'], selectbackground=T['acc'], selectforeground=T['acc_fg'],
                                       inactiveselectbackground=T['acc_soft']))

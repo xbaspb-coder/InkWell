@@ -16,12 +16,65 @@ BORDER = 3
 TITLE_H = 36
 
 
+LONG_PRESS_MS = 600
+
+
+class _Press:
+    """What a long press hands to a context-menu function in place of a Tk event."""
+
+    def __init__(self, widget, x, y, x_root, y_root):
+        self.widget, self.x, self.y, self.x_root, self.y_root = widget, x, y, x_root, y_root
+        self.state = 0
+        self.num = 3
+
+
 def bind_context(widget, fn):
-    """Right-click (and its macOS equivalents)."""
+    """Right-click (and its macOS equivalents); on a touchscreen, also press and hold."""
     widget.bind('<Button-3>', fn, add='+')
     if widget.tk.call('tk', 'windowingsystem') == 'aqua':
         widget.bind('<Button-2>', fn, add='+')
         widget.bind('<Control-Button-1>', fn, add='+')
+    hold = {'job': None}
+
+    def cancel(_e=None):
+        if hold['job'] is not None:
+            try:
+                widget.after_cancel(hold['job'])
+            except tk.TclError:
+                pass
+            hold['job'] = None
+
+    def press(e):
+        cancel()
+        os_ = getattr(widget._root(), 'quill', None)
+        if os_ is None or not getattr(os_, 'touch_mode', False):
+            return
+        hold['start'] = (e.x_root, e.y_root)
+
+        def fire():
+            hold['job'] = None
+            try:
+                if not widget.winfo_exists():
+                    return
+                # Where the finger is now, so the menu opens under it.
+                px, py = widget.winfo_pointerxy()
+            except tk.TclError:
+                return
+            sx, sy = hold['start']
+            if abs(px - sx) > 10 or abs(py - sy) > 10:
+                return
+            fn(_Press(widget, sx - widget.winfo_rootx(), sy - widget.winfo_rooty(), sx, sy))
+        hold['job'] = widget.after(LONG_PRESS_MS, fire)
+
+    def move(e):
+        if hold['job'] is not None:
+            sx, sy = hold['start']
+            if abs(e.x_root - sx) > 10 or abs(e.y_root - sy) > 10:
+                cancel()
+
+    widget.bind('<ButtonPress-1>', press, add='+')
+    widget.bind('<B1-Motion>', move, add='+')
+    widget.bind('<ButtonRelease-1>', cancel, add='+')
 
 
 class Window:
@@ -135,6 +188,10 @@ class WindowManager:
         win.ch = self.ch
         self._build_chrome(win)
         self.list.append(win)
+        if self.os.compact:
+            # On a small screen every window starts maximised; restoring gives it its usual size.
+            win.rest = (win.x, win.y, win.w, win.h)
+            win.max = True
         self.geom(win)
         ctx = Ctx(self.os, win, arg, opts)
         try:

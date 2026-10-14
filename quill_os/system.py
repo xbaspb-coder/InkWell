@@ -15,9 +15,10 @@ from .apps import load_apps
 from .core import Core, Store, kind_of
 from .imaging import HAVE_PIL, photo_from_bytes
 from .ui.desk import Desk, Notes, Ribbon, Spine
+from .ui.eyes import Eyes
 from .ui.overlays import Boot, Dialogs, Inkwell, Lock, Menu, Panels, PowerOff, Spread, Toasts, setup_wizard
 from .ui.theme import THEME_WALL, Theme
-from .ui.widgets import hide as hide_tip, wheel_units
+from .ui.widgets import hide as hide_tip, install_touch_scroll, set_touch, wheel_units
 from .ui.wm import WindowManager
 from .util import fmt_time, now_ms, uid
 
@@ -29,6 +30,7 @@ class DnD:
         self.os = os_
         self.ids = None
         self.label = None
+        self._bound = False
 
     def start(self, ids, text, e):
         os_ = self.os
@@ -37,8 +39,12 @@ class DnD:
         self.label = tk.Label(os_.root, text=text, bd=0, padx=10, pady=4, font=T.font('sans', 12),
                               bg=T['acc'], fg=T['acc_fg'])
         self._move(e)
-        os_.root.bind_all('<B1-Motion>', self._move)
-        os_.root.bind_all('<ButtonRelease-1>', self._drop)
+        if not self._bound:
+            # Added once and left in place: replacing the global bindings would remove the
+            # touch-scrolling handlers that share them.
+            self._bound = True
+            os_.root.bind_all('<B1-Motion>', self._move, add='+')
+            os_.root.bind_all('<ButtonRelease-1>', self._drop, add='+')
 
     def _move(self, e):
         if self.label is None:
@@ -49,8 +55,8 @@ class DnD:
 
     def _drop(self, e):
         root = self.os.root
-        root.unbind_all('<B1-Motion>')
-        root.unbind_all('<ButtonRelease-1>')
+        if self.ids is None and self.label is None:
+            return
         if self.label is not None:
             self.label.destroy()
             self.label = None
@@ -76,9 +82,16 @@ class QuillOS:
     SPINE = 64
     RIBBON = 38
 
-    def __init__(self, root=None, store=None):
+    def __init__(self, root=None, store=None, compact=None, touch=None, fullscreen=False):
         self.root = root or tk.Tk()
         self.root.quill = self
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        # A small screen (such as a 7-inch 800 x 480 or 1024 x 600 panel) fills the whole screen
+        # and opens every window maximised. Touch mode adds press-and-hold menus and finger scrolling.
+        self.compact = (sw <= 1024 or sh <= 640) if compact is None else bool(compact)
+        self.touch_mode = self.compact if touch is None else bool(touch)
+        self.fullscreen = bool(fullscreen)
+        set_touch(self.touch_mode)
         self.root.title('Quill.OS')
         self.quitting = False
         self._waits = []          # Tk variables of the waits in progress (Variables are not hashable)
@@ -174,9 +187,18 @@ class QuillOS:
         root = self.root
         T = self.theme
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        w, h = min(1440, max(900, int(sw * 0.9))), min(900, max(600, int(sh * 0.88)))
-        root.geometry('%dx%d+%d+%d' % (w, h, max(0, (sw - w) // 2), max(0, (sh - h) // 3)))
-        root.minsize(760, 520)
+        if self.compact or self.fullscreen:
+            root.geometry('%dx%d+0+0' % (sw, sh))
+            root.minsize(320, 240)
+            if self.fullscreen:
+                try:
+                    root.attributes('-fullscreen', True)
+                except tk.TclError:
+                    pass
+        else:
+            w, h = min(1440, max(900, int(sw * 0.9))), min(900, max(600, int(sh * 0.88)))
+            root.geometry('%dx%d+%d+%d' % (w, h, max(0, (sw - w) // 2), max(0, (sh - h) // 3)))
+            root.minsize(760, 520)
         self.desk_frame = tk.Frame(root, bd=0, highlightthickness=0)
         self.desk_frame.place(x=self.SPINE, y=self.RIBBON, relwidth=1, relheight=1, width=-self.SPINE, height=-self.RIBBON)
         T.style(self.desk_frame, bg='bg0')
@@ -207,6 +229,8 @@ class QuillOS:
         self.boot = Boot(self)
         self.lock = Lock(self)
         self.dnd = DnD(self)
+        self.eyes = Eyes(self)
+        self.powered_off = False
         self._outside = []
         self.tray_buttons = [self.ribbon.bell, self.ribbon.quick]
         self.bus.on('wm', lambda _a: self._on_wm())
@@ -215,6 +239,7 @@ class QuillOS:
         self.bus.on('storage-full', lambda _a: self.notify_once(
             'full', 'Storage is full', 'Quill could not save. Delete or export some large files in Atlas.'))
         self._bind_global()
+        install_touch_scroll(root)
         self.desk_frame.bind('<Configure>', self._desk_resized, add='+')
         self._fit_job = None
 
@@ -729,7 +754,12 @@ class QuillOS:
         self.ink.close()
         self.panels.hide()
         self.menu.hide()
-        PowerOff(self).show()
+        self.powered_off = True
+        self.eyes.hide()
+        try:
+            PowerOff(self).show()
+        finally:
+            self.powered_off = False
         if self.quitting:
             return
         self.boot.show()
@@ -748,6 +778,7 @@ class QuillOS:
         self.notes.render()
         self.bell_update()
         self.ribbon.clock_text()
+        self.eyes.apply()
 
     def on_close(self):
         """The computer's close button: like Shut down, it asks first while windows are open."""
@@ -766,6 +797,7 @@ class QuillOS:
             self.core.save(True)
             self.quitting = True
             self.sound.close()
+            self.eyes.close()
         if self._waits:
             for v in list(self._waits):
                 try:
@@ -808,6 +840,7 @@ class QuillOS:
         self.touch()
         self._sys_tick()
         self._fast_tick()
+        self.eyes.apply()
         if self.load_error:
             self.dialogs.alert('Saved data could not be read',
                                'Quill could not read your saved files, so it started empty and will not overwrite them. '
@@ -826,6 +859,15 @@ def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(prog='quill', description='Quill.OS — an operating system made of ink and glass.')
     p.add_argument('--data', help='folder for the save file (default: your user data folder)')
+    p.add_argument('--fullscreen', action='store_true', help='fill the whole screen with no window frame')
+    size = p.add_mutually_exclusive_group()
+    size.add_argument('--compact', dest='compact', action='store_true', default=None,
+                      help='small-screen layout: every window opens maximised (automatic on screens up to 1024 x 640)')
+    size.add_argument('--no-compact', dest='compact', action='store_false', help='the normal layout on any screen')
+    touch = p.add_mutually_exclusive_group()
+    touch.add_argument('--touch', dest='touch', action='store_true', default=None,
+                       help='touchscreen: press and hold for menus, drag to scroll (on with the small-screen layout)')
+    touch.add_argument('--no-touch', dest='touch', action='store_false', help='turn touchscreen behaviour off')
     args = p.parse_args(argv)
     if args.data:
         os.environ['QUILL_OS_HOME'] = os.path.abspath(args.data)
@@ -834,5 +876,5 @@ def main(argv=None):
     except tk.TclError as e:
         print('Quill.OS needs a graphical display: %s' % e, file=sys.stderr)
         return 1
-    QuillOS(root).run()
+    QuillOS(root, compact=args.compact, touch=args.touch, fullscreen=args.fullscreen).run()
     return 0

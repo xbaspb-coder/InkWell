@@ -4,6 +4,7 @@ import tkinter as tk
 
 from .base import AppSpec, Inst
 from .. import shell
+from ..ui.widgets import bar_width
 
 
 class App(AppSpec):
@@ -38,7 +39,7 @@ class Terminal:
         self.out = tk.Text(wrap, bd=0, highlightthickness=0, padx=12, pady=10, font=mono, wrap='char', cursor='xterm',
                            width=1, height=1,
                            state='disabled', spacing1=1, spacing3=1)
-        bar = tk.Scrollbar(wrap, orient='vertical', command=self.out.yview, width=10, bd=0, highlightthickness=0)
+        bar = tk.Scrollbar(wrap, orient='vertical', command=self.out.yview, width=bar_width(), bd=0, highlightthickness=0)
         self.out.configure(yscrollcommand=bar.set)
 
         def paint():
