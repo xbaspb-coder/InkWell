@@ -76,7 +76,9 @@ def def_state():
                 'clock24': True, 'volume': 70, 'bright': 100, 'uisnd': True, 'anim': True, 'fs': 14, 'autolock': 0,
                 'autosync': False, 'dnd': False, 'dock': list(DEFAULT_DOCK), 'fastBoot': False,
                 # Inkwell hardware: the distance sensor ("eyes") and the ESP32 camera
-                'eyes': True, 'eyesCm': 30, 'eyesTrig': 23, 'eyesEcho': 24, 'camUrl': 'http://192.168.4.1'},
+                'eyes': True, 'eyesCm': 30, 'eyesTrig': 23, 'eyesEcho': 24, 'camUrl': 'http://192.168.4.1',
+                # the keyboard: what each special key does (when changed in Loom) and the layout ('' = as it is)
+                'keys': {}, 'kbLayout': ''},
         'lyre': {'pat': copy.deepcopy(DEFAULT_PATTERN), 'bpm': 110, 'inst': 'triangle', 'oct': 4},
         'fs': {}, 'notes': [], 'events': {}, 'alarms': [], 'timers': [], 'notifs': [], 'scores': {}, 'hist': [], 'recent': [],
         'xapps': {},   # installed XApps: id -> name, icon, colour, version …
@@ -150,4 +152,6 @@ def normalize_state(raw):
                 s['fs'][id_] = {'id': id_, 'n': key[0].upper() + key[1:], 't': 'd', 'p': 'root', 'm': now, 'r': now}
     if not isinstance(s['set'].get('dock'), list):
         s['set']['dock'] = list(DEFAULT_DOCK)
+    if not isinstance(s['set'].get('keys'), dict):
+        s['set']['keys'] = {}
     return s

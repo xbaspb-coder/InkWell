@@ -97,7 +97,7 @@ class Desk:
             self._start_anim(kind, w, h)
 
     def _dimmer(self):
-        b = self.os.S['set'].get('bright', 100)
+        b = 100 if getattr(self.os, 'backlight', None) is not None else self.os.S['set'].get('bright', 100)
         k = 0.35 + 0.65 * b / 100 if b < 100 else 1.0
 
         def dim(color):

@@ -2,8 +2,7 @@
 
 Inkwell is made of these parts:
 - a Raspberry Pi 3 Model A+, which runs Quill.OS;
-- a 7-inch HDMI touchscreen and a USB trackpad, joined through a small USB hub;
-- a Bluetooth keyboard;
+- a 7-inch HDMI touchscreen, a USB trackpad and a USB keyboard (Portuguese layout), joined through a small USB hub;
 - an HC-SR04 distance sensor (the "eyes"), which warns when someone sits too close to the screen;
 - the ELEGOO ESP32 camera module, used by the Iris camera app.
 
@@ -17,9 +16,9 @@ It runs Quill.OS, plus OG Browser (your original OG_Browser.html) and apps from 
 | microSD card, 32 GB or more | Holds the operating system, plus 1 GB of "swap" (see below) |
 | 7-inch HDMI touchscreen | Picture through HDMI, touch through USB |
 | USB trackpad | Works together with the touchscreen |
-| Small USB hub (3–4 ports) | The Pi 3 A+ has only one USB port; the hub gives room for the touchscreen's touch cable, the trackpad and a Wi-Fi adapter |
+| USB hub with 4 ports | The Pi 3 A+ has only one USB port; the hub gives room for the touchscreen's touch cable, the trackpad, the keyboard and a Wi-Fi adapter |
 | USB Wi-Fi adapter (recommended, about 5–10 €) | Lets the Pi use the camera's Wi-Fi network and your home internet at the same time (see step 6) |
-| Bluetooth keyboard | Leaves the hub's ports free |
+| USB keyboard (Portuguese layout) | Its special keys work in Quill.OS (see step 4) |
 | HC-SR04 distance sensor | Wired to the Pi's GPIO pins |
 | Resistors: one 1 kΩ, one 2 kΩ | Protect the Pi from the sensor's 5 V signal |
 | ELEGOO ESP32 camera module | Powered through its USB-C socket |
@@ -53,31 +52,36 @@ If the repository is private, Git asks you to sign in. You can also download the
 The script does the following:
 - installs the graphics system, Python, Tkinter, Pillow and gpiozero;
 - installs the web engine (WebKitGTK) that runs OG Browser and XApps;
+- installs the reader for the keyboard's special keys (python3-evdev) and sets the Portuguese keyboard layout;
 - makes 1 GB of swap on the memory card;
 - turns on automatic login;
 - makes Quill.OS start full screen every time the Pi powers on.
 
-## 4. Pair the Bluetooth keyboard
+## 4. The keyboard
 
-Put the keyboard in pairing mode (see its manual), then on the Pi type:
+Plug the keyboard into the USB hub. The setup script sets the Portuguese layout, so Ç, º, ª, « », € and the accents type as printed on the keys.
 
-```sh
-bluetoothctl
-power on
-agent on
-scan on
-```
+What the special keys do in Quill.OS:
 
-Wait until the keyboard's name appears with an address such as `AA:BB:CC:DD:EE:FF`. Then type the following, using your keyboard's address, and enter any code it shows on the Bluetooth keyboard:
+| Key | Picture on it | What it does |
+|---|---|---|
+| F1 / F2 | Sun, small / big | Brightness down / up (in steps of 10 %, from 20 % to 100 %) |
+| F3 | Magnifier | Opens or closes the Inkwell (search) |
+| F4 | Camera | Opens Iris, the camera app |
+| F5 | Keyboard | Shows or hides the on-screen keyboard |
+| F6 | Stop | Stops the music in Lyre |
+| F7 / F8 / F9 | Previous / play-pause / next | Controls the music in Lyre (opens Lyre's player if needed) |
+| F10 / F11 / F12 | Mute / volume down / volume up | Volume, in steps of 10 % |
+| Top left | Rectangle (windows) | Spread: shows all open windows |
+| Top right | Padlock | Locks the screen |
+| CMD | ⌘ | On its own it opens the Inkwell; with another key it works like Ctrl (CMD+C copies, CMD+V pastes, CMD+S saves) |
+| Fn | — | Handled inside the keyboard itself: it usually switches the top row between these actions and plain F1–F12 |
 
-```sh
-pair AA:BB:CC:DD:EE:FF
-trust AA:BB:CC:DD:EE:FF
-connect AA:BB:CC:DD:EE:FF
-quit
-```
+A box in the middle of the screen shows the new level when you change the volume or the brightness. On the lock screen only volume, brightness and the on-screen keyboard work.
 
-`trust` makes the keyboard reconnect by itself after every restart.
+**Loom → Keyboard** shows the name and number of the last key you pressed, lets you give every special key a different action, and lets you change the layout. If a key sends a plain F number (for example F4 instead of the camera code), press it there and choose **Give this key an action**.
+
+The **on-screen keyboard** (F5, or Loom → Keyboard) is for typing with a finger. It types into the text box you touched last, moves to the top of the screen when that box would be hidden under it, and works on the lock screen and in dialogs. **⇧** gives one capital letter (twice for Caps Lock), **?123** gives symbols and accented letters (á à â ã é ê í ó ô õ ú ç €), **⇅** moves it to the other edge, and **⌄** hides it. Holding **⌫** or an arrow repeats it.
 
 ## 5. Wire the distance sensor (HC-SR04)
 
@@ -155,6 +159,7 @@ Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**,
 - **Managing it in Loom:**
   - **Account:** change the display name, see which Galau account is signed in, **Switch account** or **Sign out**. Quill always needs an account, so after signing out it asks you to sign in again straight away.
   - **Security:** **Change password** (you type the current one first), plus auto-lock and lock now.
+- **Keyboard:** see step 4 for what each special key does.
 - **Trackpad:** works at the same time as touch. Click to click; a two-finger tap (or the trackpad's right button) opens menus; two-finger scrolling scrolls.
 - **Touch:**
   - tap to click;
@@ -186,6 +191,8 @@ Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**,
 | Iris: "The camera is not answering" | Check that the camera has power and that the Pi is connected to the ELEGOO-… network (`nmcli dev status`). |
 | OG Browser or an XApp: "cannot start here" | The web engine is missing: run `sh pi/install.sh` again while connected to the internet. |
 | OG Browser: "could not connect" | The Pi has no internet; it may be on the camera's network (see step 6). |
+| A special key does nothing | Open **Loom → Keyboard** and press the key: if it shows a plain name such as F4, choose **Give this key an action**. If the keyboard key (F5) never shows up, check that `python3-evdev` is installed (run `sh pi/install.sh` again). |
+| Wrong characters (no Ç) | Choose **Portuguese (Portugal)** in **Loom → Keyboard → Layout**. |
 | Trackpad or touch stops working | Check the USB hub's cable to the Pi. If the hub has a power socket, power it from the 5 V converter. |
 | Stuck on "Sign in to Galau services" | The Pi needs internet for this step: connect it to your home Wi-Fi (see step 6). |
 | Forgot Quill's password | Over SSH, open `~/.local/share/quill-os/state.json`, change the `"pin"` value inside `"user"` to `""` and restart Quill; then set a new one in Loom → Security. |

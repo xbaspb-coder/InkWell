@@ -7,6 +7,7 @@ from tkinter import colorchooser, filedialog
 
 from .base import AppSpec, Inst
 from ..core import icon_of, kind_of, to_json
+from ..keys import ACTIONS, DEFAULTS, KEYBOARD_KEYS, KNOWN, LAYOUTS, action_for, assignable
 from ..state import ACCENTS, STORE_LIMIT, normalize_state
 from ..ui.desk import WALLS
 from ..ui.overlays import avatar, setup_wizard, swatches
@@ -15,7 +16,8 @@ from ..sensors import camera_base
 from ..ui.widgets import Btn, Entry, ScrollArea, Select, Slider, Switch, tile_image
 from ..util import ago, check_password, day_key, fmt_bytes, fmt_date, hash_password
 
-SHORTCUTS = [('Ctrl+K  or  Alt+Space', 'Open the Inkwell'), ('Alt+1 … Alt+4', 'Switch chapter'), ('Alt+S', 'Spread (all windows)'),
+SHORTCUTS = [('Ctrl+K  or  Alt+Space  or  CMD', 'Open the Inkwell'),
+             ('CMD+C, CMD+V, CMD+S …', 'The same as Ctrl+C, Ctrl+V, Ctrl+S …'), ('Alt+1 … Alt+4', 'Switch chapter'), ('Alt+S', 'Spread (all windows)'),
              ('Alt+J', 'Next window'), ('Alt+W', 'Close window'), ('Alt+M', 'Minimise window'),
              ('Alt+Enter', 'Maximise or restore'), ('Alt+T', 'New terminal'), ('Alt+E', 'Open Atlas (files)'),
              ('Alt+N', 'New note in Scribe'), ('Alt+L', 'Lock the screen'), ('Alt+Q', 'Quick settings'),
@@ -24,7 +26,8 @@ SHORTCUTS = [('Ctrl+K  or  Alt+Space', 'Open the Inkwell'), ('Alt+1 … Alt+4', 
              ('Drag to a screen edge', 'Snap a window')]
 PAGES = [('look', '🎨', 'Appearance'), ('display', '🔊', 'Display & sound'), ('account', '☁', 'Account'),
          ('security', '🔐', 'Security'), ('storage', '💾', 'Storage'), ('sensors', '👀', 'Eyes & camera'),
-         ('system', '⚙', 'System'), ('keys', '⌨', 'Shortcuts'), ('about', 'ℹ', 'About')]
+         ('system', '⚙', 'System'), ('keyboard', '⌨', 'Keyboard'), ('keys', '⌘', 'Shortcuts'),
+         ('about', 'ℹ', 'About')]
 GPIO_PINS = [4, 5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
 
 
@@ -35,7 +38,8 @@ class App(AppSpec):
     bg = ('#9aa4b8', '#4a5468')
     w, h = 800, 560
     single = True
-    kw = 'settings preferences theme wallpaper appearance pin security storage account sync sound display eyes distance sensor camera'
+    kw = ('settings preferences theme wallpaper appearance pin security storage account sync sound display eyes distance '
+          'sensor camera keyboard keys layout')
     about = 'Settings'
 
     def build(self, ctx):
@@ -119,9 +123,10 @@ class Loom:
             b = tk.Label(col, text=sub, anchor='w', justify='left', wraplength=380, font=T.font('sans', 12))
             T.style(b, bg='bg1', fg='fg2')
             b.pack(fill='x')
+            b.bind('<Configure>', lambda e: b.configure(wraplength=max(160, min(380, e.width - 4))))
         if make:
             w = make(r)
-            w.pack(side='right', padx=(12, 0))
+            w.pack(side='right', padx=(12, 0), before=col)    # the control keeps its size; the text wraps
         return r
 
     def switch(self, key, after=None):
@@ -141,6 +146,7 @@ class Loom:
                        font=self.T.font('sans', 12 if small else 13))
         self.T.style(lbl, bg='bg1', fg='fg2')
         lbl.pack(fill='x', pady=(16, 0))
+        lbl.bind('<Configure>', lambda e: lbl.configure(wraplength=max(200, min(520, e.width - 4))))
 
     def frame(self, parent=None):
         f = tk.Frame(parent or self.body, bd=0)
@@ -606,6 +612,118 @@ class Loom:
                                                             bg='bg1'))
         self.p('The ELEGOO camera makes its own Wi-Fi network, named ELEGOO- followed by letters and numbers. Connect '
                'the Raspberry Pi to that network and leave the address as http://192.168.4.1.')
+
+    def page_keyboard(self):
+        T, os_ = self.T, self.os
+        S = os_.S
+        kb = os_.keyboard
+        self.h2('Keyboard')
+
+        def layout_sel(parent):
+            def set_(v):
+                S['set']['kbLayout'] = v
+                os_.touch()
+                if v and not os_.set_layout(v):
+                    os_.toast('The layout could not be changed here (setxkbmap is missing).', '⌨')
+                elif v:
+                    os_.toast('Keyboard layout: ' + dict(LAYOUTS)[v], '⌨')
+            return Select(parent, T, LAYOUTS, S['set'].get('kbLayout', ''), set_, bg='bg1', size='sm')
+        self.row('Layout', 'Portuguese gives Ç, º, ª, « », € and the accents as printed on the keys', layout_sel)
+        self.row('On-screen keyboard', 'For typing with a finger on the touchscreen (also the ⌨ key, F5)',
+                 lambda parent: Btn(parent, T, '⌨ Show or hide', os_.osk.toggle, bg='bg1'))
+
+        self.h4('Try a key')
+
+        def live(parent):
+            lbl = tk.Label(parent, font=T.font('mono', 13, 'bold'), bd=0, anchor='e')
+            T.style(lbl, bg='bg1', fg='acc')
+            state = {'last': None}
+
+            def update():
+                try:
+                    if not lbl.winfo_exists():
+                        return
+                    last = kb.last
+                    if last != state['last']:
+                        state['last'] = last
+                        if last is None:
+                            lbl.configure(text='—')
+                        else:
+                            src, name, code = last
+                            lbl.configure(text='%s  (%s key %s)' % (name, src, code))
+                            what = ACTIONS[action_for(name, S['set'].get('keys'))]
+                            known = name in KNOWN or name in S['set'].get('keys', {})
+                            status.configure(text=('It does: ' + what) if known else
+                                             'Not a special key' + (' — it can be given an action below'
+                                                                    if assignable(src, name, code) else ''))
+                            teach.set_disabled(not assignable(src, name, code) or name in KNOWN
+                                               or name in S['set'].get('keys', {}))
+                    lbl.after(150, update)
+                except tk.TclError:
+                    pass
+            lbl.after(10, update)
+            return lbl
+        row = self.row('Last key pressed', 'Press any key to see what it sends', live)
+        status = row.winfo_children()[0].winfo_children()[1]
+
+        def add_last():
+            last = kb.last
+            if last is None or not assignable(*last):
+                return
+            S['set'].setdefault('keys', {})[last[1]] = 'none'
+            os_.touch()
+            self.draw()
+        teach = Btn(self.body, T, '＋ Give this key an action', add_last, bg='bg1', size='sm')
+        teach.set_disabled(True)
+        teach.pack(anchor='w', pady=(8, 0))
+        how = ('Special keys are read straight from the keyboard, so every key works.' if kb.source == 'evdev' else
+               'Special keys are read through the screen (X)' + (': %s.' % kb.reader_error if kb.reader_error
+                                                                    and kb.reader_error != 'not used' else '.') +
+               ' A few keys, such as ⌨, only arrive when Quill runs full screen on the Inkwell with python3-evdev.')
+        self.p(how)
+
+        self.h4('Special keys')
+        keys = S['set'].setdefault('keys', {})
+
+        def chooser(names):
+            def make(parent):
+                def set_(v):
+                    for n in names:          # one key can send any of these names
+                        if v == DEFAULTS.get(n, 'none') and n in KNOWN:
+                            keys.pop(n, None)
+                        else:
+                            keys[n] = v
+                    os_.touch()
+                return Select(parent, T, list(ACTIONS.items()), action_for(names[0], keys), set_, bg='bg1', size='sm')
+            return make
+        for where, drawn, names in KEYBOARD_KEYS:
+            self.row('%s  %s' % (where, drawn), None, chooser(names))
+        custom = [n for n in keys if n not in KNOWN]
+        if custom:
+            self.h4('Other keys')
+            for n in custom:
+                def make(parent, n=n):
+                    f = self.frame(parent)
+                    chooser([n])(f).pack(side='left')
+
+                    def forget():
+                        keys.pop(n, None)
+                        os_.touch()
+                        self.draw()
+                    Btn(f, T, '✕', forget, kind='flat', size='sm', bg='bg1').pack(side='left', padx=(6, 0))
+                    return f
+                self.row(n + '  (sent as a plain key)', None, make)
+
+        def reset():
+            keys.clear()
+            os_.touch()
+            self.draw()
+        self.row('Reset', 'Give every key its first action back', lambda parent: Btn(parent, T, 'Reset keys', reset,
+                                                                                    bg='bg1'))
+        self.p('CMD works like the Command key of a Mac: on its own it opens the Inkwell, and with another key it does '
+               'what Ctrl does (CMD+C copies, CMD+V pastes, CMD+S saves). The Fn key is handled inside the keyboard '
+               'itself; it usually switches the top row between these actions and plain F1–F12. If a key sends a plain '
+               'F number, press it above and give it an action.')
 
     def page_keys(self):
         T = self.T

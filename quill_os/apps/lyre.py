@@ -131,7 +131,7 @@ class Lyre:
                               else None)
         self.draw()
         self.inst = Inst(on_arg=self.on_arg, on_focus=lambda: self.view.focus_set(), on_close=self.on_close,
-                         mem=lambda: 150000 + (600000 if self.cur_track else 0))
+                         media=self.media, mem=lambda: 150000 + (600000 if self.cur_track else 0))
         os_.root.after(30, self.view.focus_set)
 
     # ---------------------------------------------------------- tabs
@@ -597,6 +597,22 @@ class Lyre:
                 self.play(cur)
                 return
         self._mark_track()
+
+    def media(self, cmd):
+        """The keyboard's media keys: 'stop', 'playpause', 'next' or 'prev'."""
+        if not self.ctx.alive:
+            return
+        if cmd == 'stop':
+            self.stop_music()
+            self._mark_track()
+            return
+        if self.tab != 'player':          # the track list and buttons live on the Player tab
+            self.tab = 'player'
+            self.draw()
+        if cmd == 'playpause':
+            self.play_pause()
+        elif cmd in ('next', 'prev'):
+            self.step(1 if cmd == 'next' else -1)
 
     def stop_music(self):
         if self.voice is not None:

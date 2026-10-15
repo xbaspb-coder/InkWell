@@ -25,7 +25,10 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
     xserver-xorg xserver-xorg-input-libinput xinit x11-xserver-utils matchbox-window-manager \
     python3 python3-tk python3-pil python3-pil.imagetk python3-gpiozero \
-    fonts-dejavu-core alsa-utils
+    fonts-dejavu-core alsa-utils x11-xkb-utils
+# Reads the keyboard's special keys (camera, on-screen keyboard …) that X cannot pass on.
+sudo apt-get install -y --no-install-recommends python3-evdev \
+    || echo "python3-evdev is not available: a few special keys (such as the keyboard key) will not work." >&2
 # The GPIO library gpiozero uses on current Raspberry Pi OS (missing on very old releases).
 sudo apt-get install -y python3-lgpio || echo "python3-lgpio is not available here; gpiozero will use another library."
 
@@ -43,8 +46,13 @@ else
     echo "This system does not use dphys-swapfile; leaving its swap settings as they are."
 fi
 
-echo "== Allowing access to the GPIO pins (for the distance sensor)"
+echo "== Allowing access to the GPIO pins (distance sensor), the keyboard's special keys and the backlight"
 sudo usermod -aG gpio,video,audio,input "$USER" || true
+# Screens with a backlight Quill can dim (such as the official Raspberry Pi touchscreen): let the
+# video group change it. HDMI screens have none; Quill then dims the picture instead.
+sudo tee /etc/udev/rules.d/90-quill-backlight.rules >/dev/null <<'RULES'
+SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
+RULES
 
 echo "== Starting Quill.OS automatically after power-up"
 # Log in on the screen automatically (console autologin).
@@ -61,6 +69,8 @@ cat > "$HOME/.xinitrc" <<EOF
 xset s off
 xset s noblank
 xset -dpms
+# Inkwell's keyboard is Portuguese (Loom → Keyboard can change this).
+setxkbmap pt || true
 matchbox-window-manager -use_titlebar no &
 cd "$QUILL_DIR"
 exec python3 "$QUILL_DIR/quill.py" --fullscreen

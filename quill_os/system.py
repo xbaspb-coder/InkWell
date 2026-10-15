@@ -16,14 +16,56 @@ from .core import Core, Store, kind_of
 from .galau import Galau
 from .xapps import Store as XStore, register as register_xapps
 from .imaging import HAVE_PIL, photo_from_bytes
+from .keys import LAYOUTS, Keyboard
 from .ui.desk import Desk, Notes, Ribbon, Spine
 from .ui.account import require_galau
 from .ui.eyes import Eyes
+from .ui.osk import OSK
 from .ui.overlays import Boot, Dialogs, Inkwell, Lock, Menu, Panels, PowerOff, Spread, Toasts, setup_wizard
 from .ui.theme import THEME_WALL, Theme
 from .ui.widgets import hide as hide_tip, install_touch_scroll, set_touch, wheel_units
 from .ui.wm import WindowManager
 from .util import fmt_time, now_ms, uid
+
+
+class Backlight:
+    """A screen backlight in /sys/class/backlight that this user may change."""
+
+    def __init__(self, folder):
+        self.folder = folder
+        with open(os.path.join(folder, 'max_brightness')) as f:
+            self.max = int(f.read().strip())
+        self.last = None
+
+    def set(self, percent):
+        value = max(1, round(self.max * max(5, min(100, int(percent))) / 100))
+        if value == self.last:
+            return True
+        try:
+            with open(os.path.join(self.folder, 'brightness'), 'w') as f:
+                f.write(str(value))
+        except OSError:
+            return False
+        self.last = value
+        return True
+
+
+def find_backlight(base='/sys/class/backlight'):
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return None
+    for n in names:
+        folder = os.path.join(base, n)
+        if not os.access(os.path.join(folder, 'brightness'), os.W_OK):
+            continue
+        try:
+            b = Backlight(folder)
+        except (OSError, ValueError):
+            continue
+        if b.max > 0:
+            return b
+    return None
 
 
 class DnD:
@@ -110,7 +152,8 @@ class QuillOS:
         self.load_error = self.core.load()
         self.sound = audio.Engine()
         self.theme = Theme(self.root)
-        self.theme.apply(self.S['set'])
+        self.backlight = find_backlight()
+        self.theme.apply(self._look_settings())
         self.apps = load_apps()
         self.galau = Galau(self.core.store.folder)
         self.xstore = XStore(self.galau, self.core.store.folder, self.S['xapps'])
@@ -235,6 +278,8 @@ class QuillOS:
         self.lock = Lock(self)
         self.dnd = DnD(self)
         self.eyes = Eyes(self)
+        self.osk = OSK(self)
+        self._osd = None
         self.powered_off = False
         self.account_form = None
         self.setup_state = None
@@ -247,6 +292,7 @@ class QuillOS:
             'full', 'Storage is full', 'Quill could not save. Delete or export some large files in Atlas.'))
         register_xapps(self, self.xstore)
         self._bind_global()
+        self.keyboard = Keyboard(self, use_evdev=self.fullscreen or bool(os.environ.get('QUILL_EVDEV')))
         install_touch_scroll(root)
         self.desk_frame.bind('<Configure>', self._desk_resized, add='+')
         self._fit_job = None
@@ -277,9 +323,19 @@ class QuillOS:
     def bell_update(self):
         self.ribbon.bell_update(self.core.unread_count())
 
+    def _look_settings(self):
+        """The settings the colours are made from. A screen whose backlight Quill can set (such as the
+        official Raspberry Pi touchscreen) is dimmed by its backlight, so the colours stay full."""
+        s = self.S['set']
+        if self.backlight is None:
+            return s
+        return dict(s, bright=100)
+
     def apply_look(self):
         hide_tip()
-        self.theme.apply(self.S['set'])
+        if self.backlight is not None:
+            self.backlight.set(self.S['set'].get('bright', 100))
+        self.theme.apply(self._look_settings())
         self.sound.volume = max(0, min(100, self.S['set'].get('volume', 70))) / 100
         self.desktop.apply()
         self.ribbon.tray_icons(self.S['set'].get('volume', 70), self.cloud_state)
@@ -416,7 +472,7 @@ class QuillOS:
     def _press_any(self, e):
         self.last_active = time.monotonic()
         w = e.widget
-        if isinstance(w, str):
+        if isinstance(w, str) or self.osk.owns(w):
             return
         keep = []
         for widget, close, alive, ignore in self._outside:
@@ -433,6 +489,97 @@ class QuillOS:
         win = self.wm.window_of(w)
         if win is not None and self.wm.active is not win and win in self.wm.list:
             self.wm.focus(win)
+
+    # ------------------------------------------------------------------ the keyboard's special keys
+    def osd(self, icon, label, value=None):
+        """A small box in the middle of the screen showing a level (volume, brightness) for a moment."""
+        T = self.theme
+        o = self._osd
+        if o is None or not o['box'].winfo_exists():
+            box = tk.Frame(self.root, bd=0, highlightthickness=1)
+            ic = tk.Label(box, font=T.font('sans', 30), bd=0)
+            ic.pack(padx=24, pady=(14, 2))
+            name = tk.Label(box, font=T.font('sans', 13), bd=0)
+            name.pack(padx=24)
+            bar = tk.Canvas(box, width=160, height=8, bd=0, highlightthickness=0)
+            bar.pack(padx=24, pady=(8, 16))
+            o = self._osd = {'box': box, 'ic': ic, 'name': name, 'bar': bar, 'job': None, 'value': None}
+
+            def paint():
+                box.configure(bg=T['glass'], highlightbackground=T['line'])
+                for w in (ic, name):
+                    w.configure(bg=T['glass'], fg=T['fg'])
+                bar.configure(bg=T['bg2'])
+                bar.delete('all')
+                if o['value'] is not None:
+                    bar.create_rectangle(0, 0, int(160 * o['value'] / 100), 8, fill=T['acc'], outline='')
+            o['paint'] = paint
+            T.on(box, paint, now=False)
+        o['value'] = None if value is None else max(0, min(100, int(value)))
+        o['ic'].configure(text=icon)
+        o['name'].configure(text=label + ('' if value is None else '  %d%%' % o['value']))
+        if value is None:
+            o['bar'].pack_forget()
+        elif not o['bar'].winfo_ismapped():
+            o['bar'].pack(padx=24, pady=(8, 16))
+        o['paint']()
+        o['box'].place(relx=0.5, rely=0.42, anchor='center')
+        tk.Misc.lift(o['box'])
+        if o['job'] is not None:
+            self.root.after_cancel(o['job'])
+
+        def gone():
+            o['job'] = None
+            try:
+                o['box'].place_forget()
+            except tk.TclError:
+                pass
+        o['job'] = self.root.after(1200, gone)
+
+    def set_system_volume(self, vol):
+        """Also set the Raspberry Pi's own volume (for sound from other programs), when it has a mixer."""
+        import shutil
+        import subprocess
+        if not shutil.which('amixer'):
+            return False
+        for control in ('Master', 'PCM', 'Headphone'):
+            try:
+                r = subprocess.run(['amixer', '-q', 'sset', control, '%d%%' % vol] + (['mute'] if vol == 0 else ['unmute']),
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                return False
+            if r.returncode == 0:
+                return True
+        return False
+
+    def set_layout(self, code):
+        """Change the keyboard layout of the whole screen (setxkbmap); '' leaves it alone."""
+        import shutil
+        import subprocess
+        if not code:
+            return True
+        if code not in dict(LAYOUTS) or not shutil.which('setxkbmap'):
+            return False
+        try:
+            return subprocess.run(['setxkbmap', code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  timeout=5).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def media(self, cmd):
+        """The media keys control the music in Lyre's player (opening it when needed)."""
+        win = next((w for w in self.wm.list if w.app == 'lyre'), None)
+        if win is None:
+            if cmd == 'stop':
+                return
+            win = self.wm.open('lyre', {'tab': 'player'})
+        fn = getattr(win.inst, 'media', None) if win is not None else None
+        if fn is None:
+            return
+        fn(cmd)
+        icons = {'stop': '⏹', 'playpause': '⏯', 'next': '⏭', 'prev': '⏮'}
+        names = {'stop': 'Stopped', 'playpause': 'Play / pause', 'next': 'Next track', 'prev': 'Previous track'}
+        self.osd(icons[cmd], names[cmd])
 
     # ------------------------------------------------------------------ notifications and sounds
     def ui_sound(self, kind):
@@ -819,6 +966,8 @@ class QuillOS:
             self.quitting = True
             self.sound.close()
             self.eyes.close()
+            self.keyboard.close()
+            self.osk.hide()
         if self._waits:
             for v in list(self._waits):
                 try:
@@ -838,6 +987,8 @@ class QuillOS:
         t0 = time.monotonic()
         self.boot.show()
         S['meta']['boots'] = S['meta'].get('boots', 0) + 1
+        if S['set'].get('kbLayout'):
+            self.set_layout(S['set']['kbLayout'])
         self.root.update_idletasks()
         self.apply_look()
         self.spine.render()
