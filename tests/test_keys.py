@@ -6,6 +6,7 @@ import unittest
 
 from quill_os.keys import (ACTIONS, DEFAULTS, EV_KEYS, KEYBOARD_KEYS, KNOWN, LAYOUTS, X_KEYS, Keyboard, action_for,
                            assignable, key_name, x_name)
+from quill_os import keys as keys_mod
 from quill_os.system import Backlight, find_backlight
 from quill_os.ui.osk import LETTERS, SYMBOLS, keysym_of
 
@@ -19,6 +20,41 @@ class Calls(list):
         return lambda *a: self.append((name,) + a)
 
 
+class Clock:
+    t = 1000.0
+
+    def monotonic(self):
+        return self.t
+
+
+class FakeRoot:
+    """Runs 'after' jobs only when the test moves the clock on."""
+
+    def __init__(self, clock=None):
+        self.clock = clock or Clock()
+        self.jobs = {}
+        self.n = 0
+
+    def after(self, ms, fn):
+        self.n += 1
+        self.jobs[self.n] = (self.clock.t + ms / 1000.0, fn)
+        return self.n
+
+    def after_cancel(self, job):
+        self.jobs.pop(job, None)
+
+    def run(self, seconds):
+        end = self.clock.t + seconds
+        while True:
+            due = [(t, k) for k, (t, _f) in self.jobs.items() if t <= end]
+            if not due:
+                break
+            t, k = min(due)
+            self.clock.t = max(self.clock.t, t)
+            self.jobs.pop(k)[1]()
+        self.clock.t = end
+
+
 class FakeOS:
     def __init__(self):
         self.S = {'set': {'volume': 70, 'bright': 100, 'keys': {}}}
@@ -30,7 +66,7 @@ class FakeOS:
         self.wm = type('W', (), {'open': lambda s, a: self.calls.append(('open', a))})()
         self.spread = type('P', (), {'el': None, 'open': lambda s: self.calls.append(('spread',)),
                                      'close': lambda s: None})()
-        self.root = type('R', (), {'after': lambda s, ms, fn: fn()})()
+        self.root = FakeRoot()
 
     def touch(self):
         pass
@@ -50,12 +86,20 @@ class FakeOS:
     def safe(self, fn, *a):
         return fn(*a)
 
+    def osd_hide(self):
+        self.calls.append(('osd_hide',))
+
+    def shut_down(self):
+        self.calls.append(('shut_down',))
+
 
 def keyboard(os_):
     kb = Keyboard.__new__(Keyboard)          # without binding to a real screen
     kb.os = os_
     kb.reader = None
     kb.last = None
+    kb._hold = None
+    kb._ignore_release = None
     return kb
 
 
@@ -119,6 +163,11 @@ class TestActions(unittest.TestCase):
     def setUp(self):
         self.os = FakeOS()
         self.kb = keyboard(self.os)
+        self._real = keys_mod.time
+        keys_mod.time = self.os.root.clock      # the hold timing follows the test's clock
+
+    def tearDown(self):
+        keys_mod.time = self._real
 
     def test_volume(self):
         s = self.os.S['set']
@@ -148,13 +197,68 @@ class TestActions(unittest.TestCase):
         self.assertEqual(self.os.calls[-1], ('osd', '☀', 'Brightness', 30))
 
     def test_each_key(self):
-        cases = [('SEARCH', ('ink',)), ('CAMERA', ('open', 'iris')), ('KEYBOARD', ('osk',)), ('SCREENLOCK', ('lock',)),
-                 ('HOMEPAGE', ('spread',)), ('PLAYPAUSE', ('media', 'playpause')), ('NEXTSONG', ('media', 'next')),
+        cases = [('SEARCH', ('ink',)), ('CAMERA', ('open', 'iris')), ('KEYBOARD', ('osk',)), ('HOMEPAGE', ('spread',)), ('PLAYPAUSE', ('media', 'playpause')), ('NEXTSONG', ('media', 'next')),
                  ('PREVIOUSSONG', ('media', 'prev')), ('STOPCD', ('media', 'stop')), ('WWW', ('open', 'ogb'))]
         for name, call in cases:
             self.os.calls.clear()
             self.kb.press(name)
             self.assertEqual(self.os.calls, [call], name)
+
+    def test_padlock_short_press_locks(self):
+        for name in ('SCREENLOCK', 'POWER'):
+            self.os.calls.clear()
+            self.kb.press(name, 'evdev')
+            self.os.root.run(0.3)
+            self.assertEqual(self.os.calls, [], 'nothing until it is let go')
+            self.kb.release(name)
+            self.os.root.run(0.1)
+            self.assertEqual(self.os.calls, [('lock',)], name)
+
+    def test_padlock_hold_shuts_down(self):
+        self.kb.press('SCREENLOCK', 'evdev')
+        self.os.root.run(1.0)
+        osd = [c for c in self.os.calls if c[0] == 'osd']
+        self.assertTrue(osd and osd[-1][1] == '⏻' and 0 < osd[-1][3] < 100, osd)
+        self.assertNotIn(('shut_down',), self.os.calls)
+        self.os.root.run(1.6)
+        self.assertEqual(self.os.calls.count(('shut_down',)), 1)
+        self.kb.release('SCREENLOCK')            # letting go afterwards does not lock
+        self.os.root.run(0.5)
+        self.assertNotIn(('lock',), self.os.calls)
+
+    def test_padlock_let_go_early_cancels(self):
+        self.kb.press('SCREENLOCK', 'evdev')
+        self.os.root.run(1.5)
+        self.kb.release('SCREENLOCK')
+        self.os.root.run(3)
+        self.assertIn(('osd_hide',), self.os.calls)
+        self.assertNotIn(('shut_down',), self.os.calls)
+        self.assertIn(('lock',), self.os.calls)
+
+    def test_padlock_x_repeat_keeps_holding(self):
+        # Through X a held key repeats; a repeat counts as still holding.
+        self.kb.press('SCREENLOCK', 'x')
+        for _ in range(30):
+            self.os.root.run(0.1)
+            self.kb.press('SCREENLOCK', 'x')
+        self.assertEqual(self.os.calls.count(('shut_down',)), 1)
+
+    def test_padlock_x_release_missed(self):
+        # The release never arrives (the key repeat stops): treated as a short press, never a shut-down.
+        self.kb.press('SCREENLOCK', 'x')
+        self.os.root.run(5)
+        self.assertNotIn(('shut_down',), self.os.calls)
+        self.assertIn(('lock',), self.os.calls)
+
+    def test_padlock_on_lock_screen(self):
+        self.os.lock.active = True
+        self.kb.press('SCREENLOCK', 'evdev')
+        self.kb.release('SCREENLOCK')
+        self.os.root.run(1)
+        self.assertEqual(self.os.calls, [], 'already locked')
+        self.kb.press('SCREENLOCK', 'evdev')
+        self.os.root.run(3)
+        self.assertIn(('shut_down',), self.os.calls)
 
     def test_lock_screen(self):
         self.os.lock.active = True
@@ -181,7 +285,7 @@ class TestActions(unittest.TestCase):
 class TestEvdevReader(unittest.TestCase):
     """EvdevReader with a stand-in for python3-evdev: a pipe plays the keyboard."""
 
-    def test_reads_presses_only(self):
+    def test_reads_keys_only(self):
         import sys
         import time
         import types
@@ -221,7 +325,7 @@ class TestEvdevReader(unittest.TestCase):
                 if got:
                     break
                 time.sleep(0.01)
-            self.assertEqual(got, [374])
+            self.assertEqual(got, [(374, 1), (374, 2), (374, 0)])     # pressed, held, let go; no mouse button
             reader.close()
             self.assertTrue(reader.devices[0].closed)
             fake.list_devices = lambda: ['mouse']

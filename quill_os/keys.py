@@ -13,6 +13,7 @@ What each key does can be changed in Loom → Keyboard, which also shows what a 
 import queue
 import select
 import threading
+import time
 from collections import OrderedDict
 
 # What a key can do (shown in Loom).
@@ -20,7 +21,7 @@ ACTIONS = OrderedDict([
     ('none', 'Nothing'), ('bright_down', 'Brightness down'), ('bright_up', 'Brightness up'),
     ('search', 'Search (open the Inkwell)'), ('camera', 'Camera (open Iris)'), ('osk', 'On-screen keyboard'),
     ('stop', 'Stop music'), ('prev', 'Previous track'), ('playpause', 'Play or pause'), ('next', 'Next track'),
-    ('mute', 'Mute'), ('vol_down', 'Volume down'), ('vol_up', 'Volume up'), ('lock', 'Lock the screen'),
+    ('mute', 'Mute'), ('vol_down', 'Volume down'), ('vol_up', 'Volume up'), ('lock', 'Lock the screen (hold: shut down)'),
     ('spread', 'Spread (all windows)'), ('inkwell', 'Open the Inkwell'), ('files', 'Open Atlas (files)'),
     ('browser', 'Open OG Browser'), ('xapps', 'Open XApps'), ('settings', 'Open Loom (settings)'),
 ])
@@ -31,7 +32,7 @@ LAYOUTS = [('', 'Unchanged'), ('pt', 'Portuguese (Portugal)'), ('br', 'Portugues
 
 # Linux key numbers (linux/input-event-codes.h) of the special keys, with Quill's name for each.
 EV_KEYS = {
-    113: 'MUTE', 114: 'VOLUMEDOWN', 115: 'VOLUMEUP', 120: 'SCALE', 128: 'STOP', 136: 'FIND', 142: 'SLEEP',
+    113: 'MUTE', 114: 'VOLUMEDOWN', 115: 'VOLUMEUP', 116: 'POWER', 120: 'SCALE', 128: 'STOP', 136: 'FIND', 142: 'SLEEP',
     150: 'WWW', 152: 'SCREENLOCK', 163: 'NEXTSONG', 164: 'PLAYPAUSE', 165: 'PREVIOUSSONG', 166: 'STOPCD',
     172: 'HOMEPAGE', 200: 'PLAYCD', 201: 'PAUSECD', 204: 'DASHBOARD', 212: 'CAMERA', 217: 'SEARCH',
     224: 'BRIGHTNESSDOWN', 225: 'BRIGHTNESSUP', 228: 'KBDILLUMTOGGLE', 374: 'KEYBOARD', 442: 'IMAGES',
@@ -46,7 +47,7 @@ X_KEYS = {
     'XF86MonBrightnessUp': 'BRIGHTNESSUP', 'XF86Search': 'SEARCH', 'XF86Find': 'FIND', 'XF86WebCam': 'CAMERA',
     'XF86Pictures': 'IMAGES', 'XF86KbdLightOnOff': 'KBDILLUMTOGGLE', 'XF86ScreenSaver': 'SCREENLOCK',
     'XF86Sleep': 'SLEEP', 'XF86HomePage': 'HOMEPAGE', 'XF86LaunchA': 'SCALE', 'XF86LaunchB': 'DASHBOARD',
-    'XF86WWW': 'WWW',
+    'XF86WWW': 'WWW', 'XF86PowerOff': 'POWER',
 }
 
 # What each key does unless it is changed in Loom.
@@ -55,7 +56,8 @@ DEFAULTS = {
     'PREVIOUSSONG': 'prev', 'PLAYPAUSE': 'playpause', 'PLAYCD': 'playpause', 'PAUSECD': 'playpause',
     'NEXTSONG': 'next', 'BRIGHTNESSDOWN': 'bright_down', 'BRIGHTNESSUP': 'bright_up', 'SEARCH': 'search',
     'FIND': 'search', 'CAMERA': 'camera', 'CAMERA_ACCESS_TOGGLE': 'camera', 'IMAGES': 'camera',
-    'KEYBOARD': 'osk', 'KBDILLUMTOGGLE': 'osk', 'SCREENLOCK': 'lock', 'SLEEP': 'lock', 'HOMEPAGE': 'spread',
+    'KEYBOARD': 'osk', 'KBDILLUMTOGGLE': 'osk', 'SCREENLOCK': 'lock', 'SLEEP': 'lock', 'POWER': 'lock',
+    'HOMEPAGE': 'spread',
     'SCALE': 'spread', 'DASHBOARD': 'spread', 'WWW': 'browser',
 }
 
@@ -76,6 +78,7 @@ KEYBOARD_KEYS = [
     ('F12', '🔊 (volume up)', ['VOLUMEUP']),
     ('Top left', '▭ (windows)', ['HOMEPAGE', 'SCALE', 'DASHBOARD']),
     ('Top right', '🔒 (padlock)', ['SCREENLOCK', 'SLEEP']),
+    ('Power button', '⏻ (on GPIO 3)', ['POWER']),
 ]
 KNOWN = {n for _w, _d, names in KEYBOARD_KEYS for n in names} | set(DEFAULTS)
 
@@ -156,9 +159,9 @@ class EvdevReader:
                 d = fds[fd]
                 try:
                     for ev in d.read():
-                        # pressed (not held, not released); 0x100-0x15f are mouse and touch buttons
-                        if ev.type == self.evdev.ecodes.EV_KEY and ev.value == 1 and not 0x100 <= ev.code < 0x160:
-                            self.events.put(ev.code)
+                        # value 1 pressed, 2 held (repeating), 0 let go; 0x100-0x15f are mouse and touch buttons
+                        if ev.type == self.evdev.ecodes.EV_KEY and ev.value in (0, 1, 2) and not 0x100 <= ev.code < 0x160:
+                            self.events.put((ev.code, ev.value))
                 except OSError:                                                      # unplugged
                     fds.pop(fd, None)
 
@@ -183,6 +186,9 @@ class Keyboard:
     """Connects the special keys and the CMD key to Quill."""
 
     POLL_MS = 40
+    HOLD_MS = 2500          # holding a 'lock' key (the padlock, the power button) this long shuts down
+    HOLD_SHOW_MS = 500      # … and after this long a box shows how much longer to hold
+    X_STALE = 1.0           # through X a held key repeats; silence this long means it was let go unseen
 
     def __init__(self, os_, use_evdev=True):
         self.os = os_
@@ -190,6 +196,8 @@ class Keyboard:
         self.last = None             # (source, name, number) of the last key, for Loom's tester
         self._job = None
         self._super = {'down': False, 'used': False}
+        self._hold = None            # the 'lock' key being held: name, source, start, seen, job
+        self._ignore_release = None  # a key whose hold already shut down: its release does nothing
         if use_evdev:
             try:
                 self.reader = EvdevReader()
@@ -203,6 +211,7 @@ class Keyboard:
         for xname, name in X_KEYS.items():
             try:
                 root.bind_all('<KeyPress-%s>' % xname, lambda e, n=name: self._from_x(n), add='+')
+                root.bind_all('<KeyRelease-%s>' % xname, lambda e, n=name: self._from_x_release(n), add='+')
             except Exception:        # this X server does not know the key name
                 pass
         root.bind_all('<KeyPress>', self._note, add='+')
@@ -227,17 +236,37 @@ class Keyboard:
 
     def _from_x(self, name):
         if self.reader is None:      # otherwise evdev already handles it
-            self.press(name)
+            self.press(name, 'x')
+
+    def _from_x_release(self, name):
+        if self.reader is None:
+            # While a key is held, X sends "let go" and "pressed" again many times a second (key repeat).
+            # It was really let go only if no new press follows straight away.
+            t = time.monotonic()
+            self.os.root.after(60, lambda: self._x_released(name, t))
+
+    def _x_released(self, name, t):
+        h = self._hold
+        if h is not None and h['name'] == name and h['seen'] > t:
+            return                   # a repeat, still held
+        self.release(name)
 
     def _poll(self):
         self._job = None
         if self.os.quitting or self.reader is None:
             return
-        for code in self.reader.poll():
+        for code, value in self.reader.poll():
             name = key_name(code, self.reader.evdev.ecodes)
-            self.last = ('Linux', name, code)
-            if code in EV_KEYS or (assignable('Linux', name, code) and self._custom(name)):
-                self.press(name)
+            if value == 1:
+                self.last = ('Linux', name, code)
+            if not (code in EV_KEYS or (assignable('Linux', name, code) and self._custom(name))):
+                continue
+            if value == 1:
+                self.press(name, 'evdev')
+            elif value == 2:
+                self._still_held(name)
+            else:
+                self.release(name)
         self._job = self.os.root.after(self.POLL_MS, self._poll)
 
     def _custom(self, name):
@@ -245,20 +274,97 @@ class Keyboard:
         return isinstance(keys, dict) and keys.get(name, 'none') in ACTIONS and keys.get(name, 'none') != 'none'
 
     def close(self):
+        self._hold_cancel()
         if self.reader is not None:
             self.reader.close()
             self.reader = None
 
     # ---------------------------------------------------------- doing what the key means
-    def press(self, name):
+    def _busy(self):
+        os_ = self.os
+        return os_.lock.active or getattr(getattr(os_, 'dialogs', None), 'active', False)
+
+    def press(self, name, source='x'):
         os_ = self.os
         if os_.quitting or getattr(os_, 'powered_off', False):
             return
         action = action_for(name, os_.S['set'].get('keys'))
-        busy = os_.lock.active or getattr(getattr(os_, 'dialogs', None), 'active', False)
+        if action == 'lock':         # acts when let go: a short press locks, holding shuts down
+            self._hold_start(name, source)
+            return
+        busy = self._busy()
         if busy and action not in ('mute', 'vol_down', 'vol_up', 'bright_down', 'bright_up', 'osk'):
             return               # on the lock screen and in a dialog only volume, brightness and the on-screen keyboard work
         os_.safe(self.do, action)
+
+    def release(self, name):
+        if self._ignore_release == name:
+            self._ignore_release = None
+            return
+        h = self._hold
+        if h is None or h['name'] != name:
+            return
+        self._hold_cancel()
+        os_ = self.os
+        if os_.quitting or getattr(os_, 'powered_off', False) or self._busy():
+            return               # already locked (or a dialog is open): a short press does nothing
+        os_.safe(self.do, 'lock')
+
+    # ---------------------------------------------------------- holding to shut down
+    def _hold_start(self, name, source):
+        h = self._hold
+        if h is not None:
+            if h['name'] == name:    # X's key repeat: still held
+                h['seen'] = time.monotonic()
+                return
+            self._hold_cancel()
+        t = time.monotonic()
+        self._hold = {'name': name, 'source': source, 'start': t, 'seen': t, 'shown': False, 'job': None}
+        self._hold['job'] = self.os.root.after(100, self._hold_tick)
+
+    def _still_held(self, name):
+        h = self._hold
+        if h is not None and h['name'] == name:
+            h['seen'] = time.monotonic()
+
+    def _hold_cancel(self):
+        h, self._hold = self._hold, None
+        if h is None:
+            return
+        if h['job'] is not None:
+            try:
+                self.os.root.after_cancel(h['job'])
+            except Exception:
+                pass
+        if h['shown']:
+            hide = getattr(self.os, 'osd_hide', None)
+            if hide:
+                hide()
+
+    def _hold_tick(self):
+        h = self._hold
+        if h is None:
+            return
+        h['job'] = None
+        os_ = self.os
+        if os_.quitting:
+            self._hold = None
+            return
+        now = time.monotonic()
+        if h['source'] == 'x' and now - h['seen'] > self.X_STALE:
+            self.release(h['name'])  # let go while Quill was not looking
+            return
+        held = (now - h['start']) * 1000
+        if held >= self.HOLD_MS:
+            self._ignore_release = h['name']
+            self._hold_cancel()
+            os_.safe(os_.shut_down)
+            return
+        if held >= self.HOLD_SHOW_MS:
+            h['shown'] = True
+            os_.osd('⏻', 'Keep holding to shut down',
+                    100 * (held - self.HOLD_SHOW_MS) / (self.HOLD_MS - self.HOLD_SHOW_MS))
+        h['job'] = os_.root.after(100, self._hold_tick)
 
     def do(self, action):
         os_ = self.os

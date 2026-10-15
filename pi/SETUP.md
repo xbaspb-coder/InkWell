@@ -24,6 +24,7 @@ It runs Quill.OS, plus OG Browser (your original OG_Browser.html) and apps from 
 | ELEGOO ESP32 camera module | Powered through its USB-C socket |
 | Battery pack and 5 V step-down converter (3 A or more) | Powers the Pi, the screen and the camera |
 | Breadboard and jumper wires | For the sensor wiring |
+| Push button (momentary, 2 legs or 4 legs) | The power button: turns the Pi on, locks the screen, and shuts down when held (see step 5) |
 
 ## 2. Install the operating system
 
@@ -53,6 +54,7 @@ The script does the following:
 - installs the graphics system, Python, Tkinter, Pillow and gpiozero;
 - installs the web engine (WebKitGTK) that runs OG Browser and XApps;
 - installs the reader for the keyboard's special keys (python3-evdev) and sets the Portuguese keyboard layout;
+- sets up the power button (step 5) and the safe shut-down;
 - makes 1 GB of swap on the memory card;
 - turns on automatic login;
 - makes Quill.OS start full screen every time the Pi powers on.
@@ -73,7 +75,7 @@ What the special keys do in Quill.OS:
 | F7 / F8 / F9 | Previous / play-pause / next | Controls the music in Lyre (opens Lyre's player if needed) |
 | F10 / F11 / F12 | Mute / volume down / volume up | Volume, in steps of 10 % |
 | Top left | Rectangle (windows) | Spread: shows all open windows |
-| Top right | Padlock | Locks the screen |
+| Top right | Padlock | A short press locks the screen. **Hold it for 2.5 seconds to shut the Raspberry Pi down** |
 | CMD | ⌘ | On its own it opens the Inkwell; with another key it works like Ctrl (CMD+C copies, CMD+V pastes, CMD+S saves) |
 | Fn | — | Handled inside the keyboard itself: it usually switches the top row between these actions and plain F1–F12 |
 
@@ -107,6 +109,26 @@ ECHO ──[ 1 kΩ ]──┬── GPIO 24 (pin 18)
 **Never connect ECHO straight to the Pi.** The sensor sends back 5 V, and the Pi's pins accept only 3.3 V. The two resistors reduce the signal to about 3.3 V.
 
 Mount the sensor beside the screen, facing the person using the laptop. Its two "eyes" must point forward with nothing in front of them.
+
+### The power button
+
+The padlock key can shut the Pi down, but **no keyboard key can turn it on again**: a switched-off Raspberry Pi does not listen to USB. The only way to wake a Pi 3 A+ is to connect **GPIO 3** to **GND** for a moment, so add a small push button for that:
+
+| Button leg | Connects to |
+|---|---|
+| One leg | Pi **GPIO 3** (pin 5) |
+| The other leg | Pi **GND** (pin 9) |
+
+(With a 4-leg button, use two legs on opposite corners.) No resistor is needed. GPIO 3 is not used by anything else in Inkwell.
+
+What the button does:
+- **When the Pi is off:** press it once and the Pi turns on (Quill.OS starts as usual).
+- **When Quill.OS is running:** it works like the padlock key — a short press locks the screen, holding it for 2.5 seconds shuts down.
+- If Quill.OS has stopped for some reason, holding the button for 5 seconds still shuts the Pi down safely.
+
+Holding the padlock key or the button shows a box saying **Keep holding to shut down** with a bar that fills up; let go before it is full to cancel. Quill saves everything, closes the apps and turns the Pi off. Wait until the **green light on the Pi stops flashing** before unplugging the battery.
+
+"Off" here means the Pi has stopped but is still connected to the battery, which still uses a little power (as does the screen if it has no switch). If you will not use Inkwell for a few days, disconnect the battery.
 
 ## 6. The camera
 
@@ -160,6 +182,7 @@ Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**,
   - **Account:** change the display name, see which Galau account is signed in, **Switch account** or **Sign out**. Quill always needs an account, so after signing out it asks you to sign in again straight away.
   - **Security:** **Change password** (you type the current one first), plus auto-lock and lock now.
 - **Keyboard:** see step 4 for what each special key does.
+- **Turning off and on:** hold the padlock key (or the power button) for 2.5 seconds to shut down; press the power button to turn on (see step 5).
 - **Trackpad:** works at the same time as touch. Click to click; a two-finger tap (or the trackpad's right button) opens menus; two-finger scrolling scrolls.
 - **Touch:**
   - tap to click;
@@ -192,6 +215,8 @@ Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**,
 | OG Browser or an XApp: "cannot start here" | The web engine is missing: run `sh pi/install.sh` again while connected to the internet. |
 | OG Browser: "could not connect" | The Pi has no internet; it may be on the camera's network (see step 6). |
 | A special key does nothing | Open **Loom → Keyboard** and press the key: if it shows a plain name such as F4, choose **Give this key an action**. If the keyboard key (F5) never shows up, check that `python3-evdev` is installed (run `sh pi/install.sh` again). |
+| Holding the padlock key does not shut down | Check that Quill.OS was started full screen by the setup script (on other computers holding it only shows Quill's own "off" screen). If it says it could not be turned off, run `sh pi/install.sh` again. |
+| The power button does not turn the Pi on | Check that it is wired to pin 5 and a GND pin (not pin 3 or 4), and that the battery is still connected. |
 | Wrong characters (no Ç) | Choose **Portuguese (Portugal)** in **Loom → Keyboard → Layout**. |
 | Trackpad or touch stops working | Check the USB hub's cable to the Pi. If the hub has a power socket, power it from the 5 V converter. |
 | Stuck on "Sign in to Galau services" | The Pi needs internet for this step: connect it to your home Wi-Fi (see step 6). |

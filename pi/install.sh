@@ -54,6 +54,26 @@ sudo tee /etc/udev/rules.d/90-quill-backlight.rules >/dev/null <<'RULES'
 SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
 RULES
 
+echo "== The power button (a push button between GPIO 3 and GND, see SETUP.md)"
+# When the Pi is off, connecting GPIO 3 to GND turns it on: the Pi does that by itself. While it is on,
+# this overlay makes the same button a key (KEY_POWER) that Quill reads: a short press locks the screen,
+# holding it shuts down.
+BOOT_CONFIG=/boot/firmware/config.txt
+[ -f "$BOOT_CONFIG" ] || BOOT_CONFIG=/boot/config.txt
+if [ -f "$BOOT_CONFIG" ]; then
+    grep -q '^dtoverlay=gpio-shutdown' "$BOOT_CONFIG" || echo 'dtoverlay=gpio-shutdown' | sudo tee -a "$BOOT_CONFIG" >/dev/null
+else
+    echo "No config.txt found: add the line dtoverlay=gpio-shutdown to it yourself." >&2
+fi
+# The system itself must not turn off at a short press (Quill decides); if Quill is not running,
+# holding the button for 5 seconds still turns the Pi off.
+sudo mkdir -p /etc/systemd/logind.conf.d
+sudo tee /etc/systemd/logind.conf.d/90-quill-power.conf >/dev/null <<'LOGIND'
+[Login]
+HandlePowerKey=ignore
+HandlePowerKeyLongPress=poweroff
+LOGIND
+
 echo "== Starting Quill.OS automatically after power-up"
 # Log in on the screen automatically (console autologin).
 if command -v raspi-config >/dev/null 2>&1; then

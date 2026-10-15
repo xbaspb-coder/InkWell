@@ -23,7 +23,7 @@ from .ui.eyes import Eyes
 from .ui.osk import OSK
 from .ui.overlays import Boot, Dialogs, Inkwell, Lock, Menu, Panels, PowerOff, Spread, Toasts, setup_wizard
 from .ui.theme import THEME_WALL, Theme
-from .ui.widgets import hide as hide_tip, install_touch_scroll, set_touch, wheel_units
+from .ui.widgets import Btn, hide as hide_tip, install_touch_scroll, set_touch, wheel_units
 from .ui.wm import WindowManager
 from .util import fmt_time, now_ms, uid
 
@@ -136,6 +136,9 @@ class QuillOS:
         self.compact = (sw <= 1024 or sh <= 640) if compact is None else bool(compact)
         self.touch_mode = self.compact if touch is None else bool(touch)
         self.fullscreen = bool(fullscreen)
+        # Full screen on Linux means Quill is the Raspberry Pi's whole screen: holding the padlock key
+        # turns the Pi itself off. Elsewhere it only shows Quill's own "off" screen.
+        self.real_power = self.fullscreen and sys.platform.startswith('linux')
         set_touch(self.touch_mode)
         self.root.title('Quill.OS')
         self.quitting = False
@@ -280,6 +283,7 @@ class QuillOS:
         self.eyes = Eyes(self)
         self.osk = OSK(self)
         self._osd = None
+        self.off_screen = None
         self.powered_off = False
         self.account_form = None
         self.setup_state = None
@@ -375,7 +379,6 @@ class QuillOS:
             T.style(s, bg=bg, fg='fg2')
             s.pack(pady=(4, 0))
         if buttons:
-            from .ui.widgets import Btn
             row = tk.Frame(inner, bd=0)
             T.style(row, bg=bg)
             row.pack(pady=(10, 0))
@@ -535,6 +538,18 @@ class QuillOS:
             except tk.TclError:
                 pass
         o['job'] = self.root.after(1200, gone)
+
+    def osd_hide(self):
+        o = self._osd
+        if o is None:
+            return
+        if o['job'] is not None:
+            self.root.after_cancel(o['job'])
+            o['job'] = None
+        try:
+            o['box'].place_forget()
+        except tk.TclError:
+            pass
 
     def set_system_volume(self, vol):
         """Also set the Raspberry Pi's own volume (for sound from other programs), when it has a mixer."""
@@ -909,8 +924,62 @@ class QuillOS:
         if self.S['user']['pin']:
             self.lock.show()
 
-    def power_off(self):
-        if self.wm.list and not self.dialogs.confirm('Shut down?', 'Open windows will be closed. Unsaved changes in '
+    # The commands that turn the Raspberry Pi off: through systemd (allowed for the person at the
+    # screen), or through sudo without a password (Raspberry Pi OS's first user may).
+    POWEROFF_COMMANDS = (['systemctl', 'poweroff'], ['sudo', '-n', 'systemctl', 'poweroff'])
+
+    def shut_down(self):
+        """Holding the padlock key (or the power button) turns the computer off, without asking:
+        holding the key is the answer."""
+        if self.powered_off or self.quitting:
+            return
+        if self.real_power:
+            self._power_off_device()
+        else:
+            self.power_off(ask=False)
+
+    def _power_off_device(self):
+        import subprocess
+        self.osd_hide()
+        self.osk.hide()
+        self.powered_off = True                  # the keys do nothing from now on
+        self.wm.close_all()                      # each app saves what it keeps
+        self.save(True)
+        f = tk.Frame(self.root, bg='#000000')
+        f.place(x=0, y=0, relwidth=1, relheight=1)
+        tk.Misc.lift(f)
+        T = self.theme
+        msg = tk.Label(f, text='Turning off…', bg='#000000', fg='#d8d8cf', font=T.font('sans', 16), justify='center',
+                       wraplength=420)
+        msg.place(relx=0.5, rely=0.45, anchor='center')
+        self.off_screen = f
+        self.root.update()
+        why = 'no way to turn it off was found'
+        for cmd in self.POWEROFF_COMMANDS:
+            try:
+                r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                   timeout=20)
+            except (OSError, subprocess.SubprocessError) as e:
+                why = str(e)
+                continue
+            if r.returncode == 0:
+                msg.configure(text='Turning off…\n\nWhen the green light on the Raspberry Pi stops flashing, it is off.\n'
+                                   'Press the power button to turn it on again.')
+                return True
+            why = (r.stderr or b'').decode('utf-8', 'replace').strip() or 'refused'
+        msg.configure(text='The Raspberry Pi could not be turned off:\n' + why[:200])
+
+        def back():
+            f.destroy()
+            self.off_screen = None
+            self.powered_off = False
+            if self.S['user']['pin']:
+                self.lock.show()
+        Btn(f, T, 'Back', back, kind='pri', bg='#000000').place(relx=0.5, rely=0.62, anchor='center')
+        return False
+
+    def power_off(self, ask=True):
+        if ask and self.wm.list and not self.dialogs.confirm('Shut down?', 'Open windows will be closed. Unsaved changes in '
                                                      'them may be lost.', ok='Shut down', danger=True):
             return
         self.save(True)
