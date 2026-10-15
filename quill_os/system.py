@@ -17,6 +17,7 @@ from .galau import Galau
 from .xapps import Store as XStore, register as register_xapps
 from .imaging import HAVE_PIL, photo_from_bytes
 from .ui.desk import Desk, Notes, Ribbon, Spine
+from .ui.account import require_galau
 from .ui.eyes import Eyes
 from .ui.overlays import Boot, Dialogs, Inkwell, Lock, Menu, Panels, PowerOff, Spread, Toasts, setup_wizard
 from .ui.theme import THEME_WALL, Theme
@@ -235,6 +236,8 @@ class QuillOS:
         self.dnd = DnD(self)
         self.eyes = Eyes(self)
         self.powered_off = False
+        self.account_form = None
+        self.setup_state = None
         self._outside = []
         self.tray_buttons = [self.ribbon.bell, self.ribbon.quick]
         self.bus.on('wm', lambda _a: self._on_wm())
@@ -853,8 +856,12 @@ class QuillOS:
                 return
             self.apply_look()
             self.spine.render()
-        if S['user']['pin']:
-            self.lock.show()
+        else:
+            if S['user']['pin']:
+                self.lock.show()
+            require_galau(self)         # signed out since last time: an account is needed again
+            if self.quitting:
+                return
         self.touch()
         self._sys_tick()
         self._fast_tick()

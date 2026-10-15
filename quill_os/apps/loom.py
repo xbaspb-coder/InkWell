@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 import tkinter as tk
 from tkinter import colorchooser, filedialog
 
@@ -14,7 +13,7 @@ from ..ui.overlays import avatar, setup_wizard, swatches
 from ..ui.theme import THEME_BG, THEME_NAMES
 from ..sensors import camera_base
 from ..ui.widgets import Btn, Entry, ScrollArea, Select, Slider, Switch, tile_image
-from ..util import ago, day_key, fmt_bytes, fmt_date, hash_pin
+from ..util import ago, check_password, day_key, fmt_bytes, fmt_date, hash_password
 
 SHORTCUTS = [('Ctrl+K  or  Alt+Space', 'Open the Inkwell'), ('Alt+1 … Alt+4', 'Switch chapter'), ('Alt+S', 'Spread (all windows)'),
              ('Alt+J', 'Next window'), ('Alt+W', 'Close window'), ('Alt+M', 'Minimise window'),
@@ -23,7 +22,7 @@ SHORTCUTS = [('Ctrl+K  or  Alt+Space', 'Open the Inkwell'), ('Alt+1 … Alt+4', 
              ('Ctrl+S', 'Save (editors)'), ('Ctrl+Z / Ctrl+Y', 'Undo / redo (Brush)'), ('Ctrl+Enter', 'Run code (Glyph)'),
              ('Ctrl+F', 'Find (Glyph)'), ('Ctrl+/', 'Comment lines (Glyph)'), ('F2', 'Rename (Atlas)'),
              ('Drag to a screen edge', 'Snap a window')]
-PAGES = [('look', '🎨', 'Appearance'), ('display', '🔊', 'Display & sound'), ('account', '☁', 'Account & sync'),
+PAGES = [('look', '🎨', 'Appearance'), ('display', '🔊', 'Display & sound'), ('account', '☁', 'Account'),
          ('security', '🔐', 'Security'), ('storage', '💾', 'Storage'), ('sensors', '👀', 'Eyes & camera'),
          ('system', '⚙', 'System'), ('keys', '⌨', 'Shortcuts'), ('about', 'ℹ', 'About')]
 GPIO_PINS = [4, 5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
@@ -285,14 +284,15 @@ class Loom:
     def page_account(self):
         T, os_ = self.T, self.os
         S = os_.S
-        self.h2('Account & sync')
+        g = os_.galau
+        self.h2('Account')
 
         def name_entry(parent):
             e = Entry(parent, T, S['user']['name'], placeholder='Your name', width=22)
 
             def save(_e=None):
                 v = e.get().strip()[:30]
-                if v != S['user']['name']:
+                if v and v != S['user']['name']:
                     S['user']['name'] = v
                     os_.touch()
                     os_.toast('Name saved', '✒️')
@@ -300,20 +300,59 @@ class Loom:
             e.bind('<FocusOut>', save, add='+')
             return e
         self.row('Display name', 'Shown on the lock screen and in the terminal', name_entry)
+        self.h4('Galau services')
         card = tk.Frame(self.body, bd=0, highlightthickness=1)
         T.on(card, lambda: card.configure(bg=T['bg2'], highlightbackground=T['line']))
-        card.pack(fill='x', pady=(14, 0))
-        a = tk.Label(card, text='You are using Quill as a guest.', anchor='w', font=T.font('sans', 13, 'bold'))
-        b = tk.Label(card, text='Everything is saved on this computer. Sign in with Galau services to keep your files in '
-                                'your account and open them anywhere.', anchor='w', justify='left', wraplength=480,
-                     font=T.font('sans', 13))
+        card.pack(fill='x')
+        a = tk.Label(card, text=('Signed in as ' + g.address) if g.signed_in else 'Not signed in', anchor='w',
+                     font=T.font('sans', 13, 'bold'))
+        b = tk.Label(card, text='Your Galau account is used by XApps and Galau services. It is the same account as '
+                                'OG Browser and Galau Mail.', anchor='w', justify='left', wraplength=460,
+                     font=T.font('sans', 12))
         T.style(a, bg='bg2', fg='fg')
         T.style(b, bg='bg2', fg='fg2')
         a.pack(fill='x', padx=14, pady=(14, 4))
         b.pack(fill='x', padx=14)
-        Btn(card, T, 'Sign in with Galau services', lambda: os_.toast('Not running inside OG Browser.', '⚠️'), kind='pri',
-            bg='bg2').pack(anchor='w', padx=14, pady=14)
+        row = tk.Frame(card, bd=0)
+        T.style(row, bg='bg2')
+        row.pack(anchor='w', padx=14, pady=14)
+        Btn(row, T, 'Switch account', self.switch_account, bg='bg2').pack(side='left')
+        Btn(row, T, 'Sign out', self.sign_out, kind='dng', bg='bg2').pack(side='left', padx=(6, 0))
+        Btn(row, T, '🌐 Manage in OG Browser', lambda: os_.open_web({'type': 'og', 'host': 'account.auth', 'path': '/'}),
+            bg='bg2').pack(side='left', padx=(6, 0))
         self.p('Your save file: ' + os_.core.store.path)
+
+    def switch_account(self):
+        """Sign in with another Galau account; the current one stays until the new one works."""
+        from ..ui.account import galau_form
+        os_ = self.os
+        T = self.T
+
+        def build(box, close):
+            h = tk.Label(box, text='Switch account', anchor='w', font=T.font('serif', 20, 'bold', 'italic'), bd=0)
+            T.style(h, bg='bg1', fg='fg')
+            h.pack(fill='x', pady=(0, 8))
+
+            def done(address):
+                os_.toast('Signed in as ' + address, '✅')
+                close(True)
+            form = galau_form(box, os_, done, width=360)
+            form.pack(fill='x')
+            Btn(box, T, 'Cancel', lambda: close(None), bg='bg1').pack(anchor='e', pady=(10, 0))
+            return form.fields['login']
+        os_.dialogs.show(build)
+        self.draw()
+
+    def sign_out(self):
+        from ..ui.account import require_galau
+        os_ = self.os
+        if not os_.dialogs.confirm('Sign out of Galau services?', 'Quill.OS needs a Galau account, so it will ask you to '
+                                   'sign in again straight away.', ok='Sign out', danger=True):
+            return
+        os_.galau.sign_out()
+        require_galau(os_)
+        if self.ctx.alive:
+            self.draw()
 
     def page_security(self):
         T, os_ = self.T, self.os
@@ -324,51 +363,33 @@ class Loom:
 
         def ask(title, text):
             return dl.prompt(title, '', text=text, ok='OK', password=True,
-                             validate=lambda v: None if re.fullmatch(r'\d{4,12}', v) else 'Use 4 to 12 digits.')
+                             validate=lambda v: None if len(v) >= 4 else 'Use at least 4 characters.')
 
-        def check():
-            if not S['user']['pin']:
-                return True
-            v = dl.prompt('Enter your current PIN', '', ok='Continue', password=True)
-            if v is None:
-                return False
-            if hash_pin(v) == S['user']['pin']:
-                return True
-            os_.toast('That PIN is not right', '🔐')
-            return False
-
-        def set_pin():
-            if not check():
-                return
-            a = ask('New PIN' if has else 'Choose a PIN', '4 to 12 digits.')
+        def change():
+            if has:
+                v = dl.prompt('Enter your current password', '', ok='Continue', password=True)
+                if v is None:
+                    return
+                if not check_password(v, S['user']['pin']):
+                    os_.toast('That password is not right', '🔐')
+                    return
+            a = ask('New password' if has else 'Choose a password', 'At least 4 characters.')
             if a is None:
                 return
-            b = ask('Confirm the PIN', 'Type it again.')
+            b = ask('Confirm the password', 'Type it again.')
             if b is None:
                 return
             if a != b:
-                os_.toast('The two PINs did not match', '🔐')
+                os_.toast('The two passwords did not match', '🔐')
                 return
-            S['user']['pin'] = hash_pin(a)
+            S['user']['pin'] = hash_password(a)
             os_.touch()
-            os_.toast('PIN saved', '🔐')
+            os_.toast('Password saved', '🔐')
             self.draw()
 
-        def remove():
-            if not check():
-                return
-            S['user']['pin'] = ''
-            os_.touch()
-            os_.toast('PIN removed', '🔐')
-            self.draw()
-
-        def pin_btns(parent):
-            f = self.frame(parent)
-            Btn(f, T, 'Change PIN' if has else 'Set a PIN', set_pin, bg='bg1').pack(side='left')
-            if has:
-                Btn(f, T, 'Remove', remove, kind='dng', bg='bg1').pack(side='left', padx=(6, 0))
-            return f
-        self.row('PIN lock', 'A PIN is needed to unlock the screen.' if has else 'Add a PIN to the lock screen.', pin_btns)
+        self.row('Quill password', 'Needed when Quill starts and to unlock the screen.' if has else
+                 'Add a password to protect Quill.',
+                 lambda parent: Btn(parent, T, 'Change password' if has else 'Set a password', change, bg='bg1'))
 
         def autolock(parent):
             def set_(v):
@@ -378,8 +399,8 @@ class Loom:
                                       (30, 'After 30 minutes')], S['set'].get('autolock', 0), set_, bg='bg1', size='sm')
         self.row('Auto-lock', 'Lock the screen when you are away', autolock)
         self.row('Lock now', None, lambda parent: Btn(parent, T, '🔒 Lock', lambda: os_.lock.show(), bg='bg1'))
-        self.p('The PIN keeps people from using Quill on this computer. It is stored only as a hash, and it is not a '
-               'substitute for locking your computer.')
+        self.p('Quill\'s password stays on this computer, stored only as a salted hash. It is separate from your Galau '
+               'password, which you change in OG Browser (account.auth).')
 
     def page_storage(self):
         T, os_ = self.T, self.os

@@ -8,6 +8,8 @@ so that saved data stays compatible between the HTML and Python versions.
 import base64
 import datetime as _dt
 import hashlib
+import hmac
+import os
 import random
 import re
 import string
@@ -122,6 +124,29 @@ def _utf16_units(s):
 def hash_pin(pin):
     """SHA-256 of 'quill:' + PIN, so PINs from the HTML version keep working."""
     return hashlib.sha256(('quill:' + str(pin)).encode('utf-8')).hexdigest()
+
+
+PASSWORD_ROUNDS = 60000   # about half a second on a Raspberry Pi 3
+
+
+def hash_password(password):
+    """A salted, slow hash of Quill's password (PBKDF2-SHA256), stored as 'pbkdf2$rounds$salt$hash'."""
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac('sha256', str(password).encode('utf-8'), salt, PASSWORD_ROUNDS)
+    return 'pbkdf2$%d$%s$%s' % (PASSWORD_ROUNDS, salt.hex(), digest.hex())
+
+
+def check_password(password, stored):
+    """Whether password matches what hash_password() (or an older PIN hash) stored."""
+    stored = stored or ''
+    if stored.startswith('pbkdf2$'):
+        try:
+            _, rounds, salt, digest = stored.split('$')
+            got = hashlib.pbkdf2_hmac('sha256', str(password).encode('utf-8'), bytes.fromhex(salt), int(rounds))
+        except (ValueError, TypeError):
+            return False
+        return hmac.compare_digest(got.hex(), digest)
+    return bool(stored) and hmac.compare_digest(hash_pin(password), stored)
 
 
 def fmt_dur(ms, tenth=False):

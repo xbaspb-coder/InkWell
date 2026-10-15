@@ -23,6 +23,7 @@ class FakeGalau:
     def __init__(self):
         self.rows = {}
         self.tokens = {}
+        self.confirm_signups = False
         self.log = []
         self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), self._handler())
         self.url = 'http://127.0.0.1:%d' % self.server.server_address[1]
@@ -89,6 +90,32 @@ class FakeGalau:
                         fake.tokens[tok] = (email, user)
                         return self._send(200, {'access_token': tok, 'refresh_token': 'r-' + tok, 'expires_in': 3600,
                                                 'user': {'id': user['id'], 'email': email}})
+                if u.path == '/auth/v1/signup':
+                    b = self._body()
+                    if b.get('email') in USERS:
+                        return self._send(422, {'msg': 'User already registered'})
+                    user = {'id': str(uuid.uuid4()), 'password': b.get('password'), 'username': None, 'verified': False}
+                    USERS[b['email']] = user
+                    if fake.confirm_signups:          # the server wants a separate sign-in
+                        return self._send(200, {'id': user['id'], 'email': b['email']})
+                    tok = 'tok-' + uuid.uuid4().hex
+                    fake.tokens[tok] = (b['email'], user)
+                    return self._send(200, {'access_token': tok, 'refresh_token': 'r-' + tok, 'expires_in': 3600,
+                                            'user': {'id': user['id'], 'email': b['email']}})
+                if u.path == '/rest/v1/profiles':
+                    if method == 'GET':
+                        name = q.get('username', '')[3:]
+                        return self._send(200, [{'id': v['id']} for v in USERS.values() if v.get('username') == name])
+                    me_ = self._user()
+                    b = self._body()
+                    if me_ is None or b.get('id') != me_[1]['id']:
+                        return self._send(403, {'message': 'new row violates row-level security policy'})
+                    if any(v.get('username') == b.get('username') for v in USERS.values()):
+                        return self._send(409, {'code': '23505', 'message': 'duplicate key value'})
+                    me_[1]['username'] = b['username']
+                    return self._send(201, [b])
+                if u.path == '/rest/v1/rpc/send_verification':
+                    return self._send(200, None)
                 if u.path == '/auth/v1/logout':
                     fake.tokens.pop((self.headers.get('Authorization') or '')[7:], None)
                     return self._send(204)

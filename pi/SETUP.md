@@ -147,6 +147,14 @@ Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**,
 ## 8. Using it
 
 - Restart with `sudo reboot`. Quill.OS starts full screen.
+- **The first start** (the Pi needs internet for it):
+  1. **Sign in or sign up to Galau services.** This step cannot be skipped; it uses the same account as OG Browser and Galau Mail. Sign up creates a new name@gla.ml address, and its verification code arrives in Galau Mail.
+  2. **Choose your display name** (it starts as your Galau username).
+  3. **Choose a password for Quill** (at least 4 characters). You type it whenever Quill starts and to unlock the screen. It stays on the laptop and is separate from your Galau password.
+  4. Pick a theme, and you are in.
+- **Managing it in Loom:**
+  - **Account:** change the display name, see which Galau account is signed in, **Switch account** or **Sign out**. Quill always needs an account, so after signing out it asks you to sign in again straight away.
+  - **Security:** **Change password** (you type the current one first), plus auto-lock and lock now.
 - **Trackpad:** works at the same time as touch. Click to click; a two-finger tap (or the trackpad's right button) opens menus; two-finger scrolling scrolls.
 - **Touch:**
   - tap to click;
@@ -179,4 +187,6 @@ Connect the battery pack to a **5 V step-down (buck) converter of 3 A or more**,
 | OG Browser or an XApp: "cannot start here" | The web engine is missing: run `sh pi/install.sh` again while connected to the internet. |
 | OG Browser: "could not connect" | The Pi has no internet; it may be on the camera's network (see step 6). |
 | Trackpad or touch stops working | Check the USB hub's cable to the Pi. If the hub has a power socket, power it from the 5 V converter. |
+| Stuck on "Sign in to Galau services" | The Pi needs internet for this step: connect it to your home Wi-Fi (see step 6). |
+| Forgot Quill's password | Over SSH, open `~/.local/share/quill-os/state.json`, change the `"pin"` value inside `"user"` to `""` and restart Quill; then set a new one in Loom → Security. |
 | Quill.OS closes with an error | Read `~/.quill-x.log`, or run `python3 quill.py` over SSH with `DISPLAY=:0` to see the message. |

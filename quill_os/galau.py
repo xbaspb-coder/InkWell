@@ -9,6 +9,7 @@ All calls block, so the apps run them on a background thread (see run_async).
 
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -17,17 +18,22 @@ import urllib.request
 
 # The same public address and key OG Browser uses (a "publishable" key: what each person may
 # do is decided by the database's own rules, not by keeping this key secret).
-URL = 'https://qdrxeepxlphnqzbghcwn.supabase.co'
+# QUILL_GALAU_URL points Quill at another server (for testing).
+URL = os.environ.get('QUILL_GALAU_URL') or 'https://qdrxeepxlphnqzbghcwn.supabase.co'
 KEY = ('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkcnhlZXB4bHBobnF6YmdoY3duIiwicm9sZSI6'
        'ImFub24iLCJpYXQiOjE3OTE1NjQwNjksImV4cCI6MjEwNzE0MDA2OX0.v5WwwyMnnQ4JQBfJOQ5sKvOtLd3Doqar37k2M4s7vxU')
 MAIL_DOMAIN = 'gla.ml'
 TIMEOUT = 20
 
 
+USERNAME = re.compile(r'^[a-z0-9._]{3,30}$')
+
+
 class GalauError(Exception):
-    def __init__(self, message, status=0):
+    def __init__(self, message, status=0, code=''):
         super().__init__(message)
         self.status = status
+        self.code = code
 
 
 def friendly(e):
@@ -107,7 +113,7 @@ class Galau:
                 info = {}
             msg = (info.get('msg') or info.get('message') or info.get('error_description') or info.get('error')
                    or 'The server answered with error %d.' % e.code)
-            raise GalauError(str(msg), e.code)
+            raise GalauError(str(msg), e.code, str(info.get('code') or ''))
         if not raw:
             return None
         try:
@@ -166,6 +172,51 @@ class Galau:
             raise
         with self._lock:
             self._keep(s)
+        return self.address
+
+    def sign_up(self, username, password, confirm):
+        """Create a Galau account (name@gla.ml), as OG Browser's Sign up does, and stay signed in."""
+        username = (username or '').strip().lower()
+        if username.endswith('@' + MAIL_DOMAIN):
+            username = username[:-len(MAIL_DOMAIN) - 1]
+        if not USERNAME.match(username):
+            raise GalauError('Please use 3 to 30 lowercase letters, numbers, dots or underscores.')
+        if len(password or '') < 6:
+            raise GalauError('The password needs at least 6 characters.')
+        if password != confirm:
+            raise GalauError('The two passwords are different.')
+        email = username + '@' + MAIL_DOMAIN
+        taken = self._request('GET', '/rest/v1/profiles', params={'select': 'id', 'username': 'eq.' + username})
+        if taken:
+            raise GalauError(email + ' is already taken.')
+        try:
+            made = self._request('POST', '/auth/v1/signup', {'email': email, 'password': password})
+        except GalauError as e:
+            if 'already registered' in str(e).lower():
+                raise GalauError(email + ' is already taken.')
+            raise
+        try:
+            if made and made.get('access_token'):
+                with self._lock:
+                    self._keep(made)
+            else:      # the server asked for a separate sign-in
+                self.sign_in(email, password)
+            try:
+                self.insert('profiles', {'id': self.user_id, 'username': username})
+            except GalauError as e:
+                if e.code == '23505':
+                    raise GalauError(email + ' is already taken.')
+                raise
+            try:   # Galau's verification code arrives in the new Galau Mail inbox
+                self.rpc('send_verification', {'resend': False})
+            except GalauError:
+                pass
+        except Exception:
+            # Do not stay signed in to an account without a Galau profile.
+            with self._lock:
+                self.session = None
+                self._save()
+            raise
         return self.address
 
     def sign_out(self):

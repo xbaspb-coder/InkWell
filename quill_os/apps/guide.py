@@ -35,7 +35,7 @@ An operating system made of ink and glass. This guide covers everything.
 | **Pulse** | Task manager, performance graphs and services |
 | **Portal** | Jump to Galau Mail, Ferret, LifeCraft, LifeGames and the other OG sites |
 | **Compass** | Opens web pages in a web window, and .og sites in OG Browser |
-| **Loom** | Settings: themes, wallpapers, PIN lock, storage, sync |
+| **Loom** | Settings: themes, wallpapers, your Galau account, your password, storage |
 
 ## Your files
 Everything lives in a private file system on this computer: Desktop, Documents, Pictures, Music, Downloads and Projects. Files you delete go to the **Trash** first. Each file can be up to 1.5 MB, and all of Quill together holds about 4 MB.
@@ -59,7 +59,7 @@ help             every command
 ## Tips
 - Press **Ctrl+S** in any editor to save.
 - In Glyph, **Ctrl+Enter** runs the file, **Ctrl+/** comments lines and **Ctrl+F** finds text.
-- Set a **PIN** in Loom, then press **Alt+L** to lock.
+- Your **password** (set when Quill first starts, changed in Loom → Security) unlocks the screen. Press **Alt+L** to lock.
 """
 
 

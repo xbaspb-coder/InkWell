@@ -15,7 +15,7 @@ from .theme import THEME_NAMES, THEME_BG
 from ..calc import CalcError, calc_eval, fmt_num
 from ..core import icon_of
 from ..state import ACCENTS
-from ..util import DAYS, MONTHS, ago, clamp, fmt_time, js_weekday, hash_pin, mix
+from ..util import DAYS, MONTHS, ago, check_password, clamp, fmt_time, js_weekday, mix
 import datetime as _dt
 import re
 
@@ -1104,12 +1104,12 @@ class Lock:
         self.el = c
         name = S['user']['name'] or os_.me or 'Guest'
         # Text and the avatar are drawn straight onto the background so nothing hides the gradient;
-        # only the PIN box and the button are real widgets.
+        # only the password box and the button are real widgets.
         row = tk.Frame(c, bd=0)
         state = {'done': False, 'msg': ''}
         inp = None
         if S['user']['pin']:
-            inp = Entry(row, T, placeholder='PIN', show='•', width=12, font=T.font('sans', 18), justify='center')
+            inp = Entry(row, T, placeholder='Password', show='•', width=14, font=T.font('sans', 18), justify='center')
             inp.pack(side='left', ipady=6, padx=(0, 8))
 
         def unlock():
@@ -1119,10 +1119,10 @@ class Lock:
             if inp is None:
                 unlock()
                 return
-            if hash_pin(inp.get()) == S['user']['pin']:
+            if check_password(inp.get(), S['user']['pin']):
                 unlock()
             else:
-                state['msg'] = 'That is not the right PIN.'
+                state['msg'] = 'That is not the right password.'
                 layout()
                 inp.set('')
                 os_.ui_sound('error')
@@ -1237,52 +1237,115 @@ def avatar(parent, T, letter, size, surface):
 
 
 def setup_wizard(os_):
-    """The welcome wizard: name, look, and a few tips. Waits until it is finished."""
+    """The welcome wizard: Galau account, display name, Quill's password, look, tips.
+
+    The Galau step has no way to skip it; it is left out when an account is already signed in.
+    Waits until the wizard is finished."""
+    from .account import galau_form
+    from ..util import hash_password
     T = os_.theme
     S = os_.S
     c = full_layer(os_, 'setup')
-    state = {'step': 0, 'done': False, 'name': S['user']['name'] or os_.me or ''}
+    steps = ([] if os_.galau.signed_in else ['galau']) + ['name', 'password', 'look', 'done']
+    state = {'i': 0, 'done': False, 'name': S['user']['name'] or os_.me or '', 'pw': None}
     holder = {'card': None}
+    pad = 16 if os_.compact else 26
+    os_.setup_state = state            # for tests
+
+    def go(step):
+        state['i'] = steps.index(step)
+        render()
+
+    def galau_name():
+        return (os_.galau.address or '').split('@')[0]
 
     def render():
         if holder['card'] is not None:
             holder['card'].destroy()
+        step = steps[state['i']]
+        state['step'] = step
         card = tk.Frame(c, bd=0, highlightthickness=1)
         T.on(card, lambda: card.configure(bg=T['bg1'], highlightbackground=T['line']))
         holder['card'] = card
         inner = tk.Frame(card, bd=0)
         T.style(inner, bg='bg1')
-        inner.pack(fill='both', expand=True, padx=26, pady=26)
+        inner.pack(fill='both', expand=True, padx=pad, pady=pad)
 
         def h2(text):
-            lbl = tk.Label(inner, text=text, anchor='w', font=T.font('serif', 26, 'bold', 'italic'))
+            lbl = tk.Label(inner, text=text, anchor='w', font=T.font('serif', 22 if os_.compact else 26, 'bold', 'italic'))
             T.style(lbl, bg='bg1', fg='fg')
             lbl.pack(fill='x', pady=(0, 6))
 
-        def p(text):
-            lbl = tk.Label(inner, text=text, anchor='w', justify='left', wraplength=400, font=T.font('sans', 14))
+        def p(text, after=16):
+            lbl = tk.Label(inner, text=text, anchor='w', justify='left', wraplength=400, font=T.font('sans', 13))
             T.style(lbl, bg='bg1', fg='fg2')
-            lbl.pack(fill='x', pady=(0, 16))
+            lbl.pack(fill='x', pady=(0, after))
+            return lbl
+
+        def footer():
+            f = tk.Frame(inner, bd=0)
+            T.style(f, bg='bg1')
+            return f
 
         foot = None
-        if state['step'] == 0:
-            av = avatar(inner, T, ((state['name'] or 'Q')[:1] or 'Q').upper(), 84, 'bg1')
-            av.pack(anchor='w', pady=(0, 14))
+        if step == 'galau':
             h2('Welcome to Quill.OS')
-            p('A small operating system made of ink and glass. What should it call you?')
-            inp = Entry(inner, T, value=state['name'], placeholder='Your name', font=T.font('sans', 15))
-            inp.pack(fill='x', ipady=8, pady=(0, 16))
+            p('First, sign in or sign up to Galau services. It is the same account as OG Browser and Galau Mail.', 10)
+
+            def signed(_address):
+                if not state['name']:
+                    state['name'] = galau_name()
+                go('name')
+            form = galau_form(inner, os_, signed)
+            form.pack(fill='x')
+            os_.account_form = form
+        elif step == 'name':
+            if not os_.compact:
+                av = avatar(inner, T, ((state['name'] or 'Q')[:1] or 'Q').upper(), 84, 'bg1')
+                av.pack(anchor='w', pady=(0, 14))
+            h2('Your display name')
+            p('What should Quill call you? It is shown on the lock screen and in the terminal.')
+            inp = Entry(inner, T, value=state['name'] or galau_name(), placeholder='Your name', font=T.font('sans', 15))
+            inp.pack(fill='x', ipady=8, pady=(0, 6))
+            msg = p('', 8)
 
             def nxt(_e=None):
-                state['name'] = inp.get()[:30]
-                state['step'] = 1
-                render()
+                v = inp.get().strip()[:30]
+                if not v:
+                    msg.configure(text='Please type a name.')
+                    return
+                state['name'] = v
+                go('password')
             inp.bind('<Return>', nxt)
-            foot = tk.Frame(inner, bd=0)
-            T.style(foot, bg='bg1')
+            foot = footer()
             Btn(foot, T, 'Next →', nxt, kind='pri', bg='bg1').pack(side='right')
             c.after(30, inp.focus_set)
-        elif state['step'] == 1:
+        elif step == 'password':
+            h2('A password for Quill')
+            p('You type it when Quill starts and to unlock the screen. It stays on this computer and is separate '
+              'from your Galau password.', 10)
+            a = Entry(inner, T, placeholder='Password (at least 4 characters)', show='•', font=T.font('sans', 14))
+            a.pack(fill='x', ipady=6, pady=(0, 8))
+            b = Entry(inner, T, placeholder='Type it again', show='•', font=T.font('sans', 14))
+            b.pack(fill='x', ipady=6, pady=(0, 6))
+            msg = p('', 8)
+
+            def nxt(_e=None):
+                if len(a.get()) < 4:
+                    msg.configure(text='The password needs at least 4 characters.')
+                    return
+                if a.get() != b.get():
+                    msg.configure(text='The two passwords are different.')
+                    return
+                state['pw'] = a.get()
+                go('look')
+            a.bind('<Return>', lambda e: b.focus_set())
+            b.bind('<Return>', nxt)
+            foot = footer()
+            Btn(foot, T, '← Back', lambda: go('name'), bg='bg1').pack(side='left')
+            Btn(foot, T, 'Next →', nxt, kind='pri', bg='bg1').pack(side='right')
+            c.after(30, a.focus_set)
+        elif step == 'look':
             h2('Choose your look')
             p('Pick a theme and an accent colour. You can change both any time in Loom.')
             tg = tk.Frame(inner, bd=0)
@@ -1300,10 +1363,9 @@ def setup_wizard(os_):
             sw = swatches(inner, T, ACCENTS, S['set']['accent'],
                           lambda a: (S['set'].__setitem__('accent', a), os_.touch(), os_.apply_look(), render()), 'bg1')
             sw.pack(anchor='w', pady=(0, 14))
-            foot = tk.Frame(inner, bd=0)
-            T.style(foot, bg='bg1')
-            Btn(foot, T, '← Back', lambda: (state.__setitem__('step', 0), render()), bg='bg1').pack(side='left')
-            nb = Btn(foot, T, 'Next →', lambda: (state.__setitem__('step', 2), render()), kind='pri', bg='bg1')
+            foot = footer()
+            Btn(foot, T, '← Back', lambda: go('password'), bg='bg1').pack(side='left')
+            nb = Btn(foot, T, 'Next →', lambda: go('done'), kind='pri', bg='bg1')
             nb.pack(side='right')
             c.after(30, nb.focus_set)
         else:
@@ -1315,7 +1377,7 @@ def setup_wizard(os_):
             rows = [('Ctrl+K', 'The Inkwell: launch apps, find files, do maths'),
                     ('Left bar', 'The Spine holds your apps; right-click to pin'),
                     ('I II III IV', 'Four chapters (desktops); Alt+1 to Alt+4'),
-                    ('Alt+S', 'Spread: see every window')]
+                    ('Loom', 'Settings, your Galau account and your password')]
             for i, (k, v) in enumerate(rows):
                 a = tk.Label(kv, text=k, anchor='w', font=T.font('sans', 13, 'bold'))
                 b = tk.Label(kv, text=v, anchor='w', font=T.font('sans', 13))
@@ -1326,27 +1388,31 @@ def setup_wizard(os_):
 
             def finish():
                 S['user']['name'] = (state['name'] or '').strip()[:30]
+                if state['pw']:
+                    S['user']['pin'] = hash_password(state['pw'])
+                    state['pw'] = None
                 S['meta']['setup'] = True
                 os_.touch()
                 state['done'] = True
-            foot = tk.Frame(inner, bd=0)
-            T.style(foot, bg='bg1')
-            Btn(foot, T, '← Back', lambda: (state.__setitem__('step', 1), render()), bg='bg1').pack(side='left')
+            foot = footer()
+            Btn(foot, T, '← Back', lambda: go('look'), bg='bg1').pack(side='left')
             sb = Btn(foot, T, 'Start using Quill', finish, kind='pri', bg='bg1')
             sb.pack(side='right')
             c.after(30, sb.focus_set)
         if foot is not None:
             foot.pack(fill='x')
         c.delete('card')
-        c.create_window(c.winfo_width() / 2, c.winfo_height() / 2, window=card, tags='card', width=min(460, max(300, c.winfo_width() - 40)))
+        c.create_window(c.winfo_width() / 2, c.winfo_height() / 2, window=card, tags='card',
+                        width=min(460, max(300, c.winfo_width() - 24)))
 
     def center(_e=None):
         c.coords('card', c.winfo_width() / 2, c.winfo_height() / 2)
-        c.itemconfigure('card', width=min(460, max(300, c.winfo_width() - 40)))
+        c.itemconfigure('card', width=min(460, max(300, c.winfo_width() - 24)))
     c.bind('<Configure>', center, add='+')
     c.update_idletasks()
     render()
     os_.wait(lambda: state['done'] or os_.quitting)
+    os_.account_form = None
     try:
         c.destroy()
     except tk.TclError:
