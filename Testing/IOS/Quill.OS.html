@@ -463,6 +463,67 @@ textarea,input,.guide,.md,[contenteditable]{-webkit-user-select:text;user-select
 /* ===================================================================
    Quill.OS — an operating system that lives inside OG Browser (quill.os)
    =================================================================== */
+/* ===================== Meter: how much work each app does (shown by the Insider XApp) =====================
+   Every timer, animation frame and event handler a window sets up is timed, and the time is booked to that
+   window. Work started from inside a window (a click that sets a timer, a timer that sets another) stays
+   booked to it. Everything else (the desktop, the dock, the clock) is booked to Quill.OS itself.
+   This is processor time spent in JavaScript; the browser does not tell web pages the real battery use of
+   each app, so the battery figures in Insider are estimated from it. */
+const Meter = (() => {
+  const now = () => performance.now();
+  const started = now();
+  const use = new Map();        // owner ('sys' or 'w<window id>') -> { cpu (ms), wake (callbacks run) }
+  const appOf = new Map();      // owner -> app id, kept after the window closes
+  let cur = 'sys', child = 0;
+  const rec = o => { let r = use.get(o); if (!r) use.set(o, r = { cpu: 0, wake: 0 }); return r; };
+  function run(owner, fn, self, args) {
+    const prevOwner = cur, prevChild = child;
+    cur = owner; child = 0;
+    const t = now();
+    try { return fn.apply(self, args); }
+    finally {
+      const d = now() - t, r = rec(owner);
+      r.cpu += Math.max(0, d - child); r.wake++;                       // time spent in nested callbacks is theirs
+      cur = prevOwner; child = prevChild + d;
+    }
+  }
+  const W = window;
+  const sT = W.setTimeout, sI = W.setInterval, rAF = W.requestAnimationFrame;
+  W.setTimeout = function (fn, ms, ...a) { if (typeof fn !== 'function') return sT.call(W, fn, ms, ...a); const o = cur; return sT.call(W, function () { return run(o, fn, this, arguments); }, ms, ...a); };
+  W.setInterval = function (fn, ms, ...a) { if (typeof fn !== 'function') return sI.call(W, fn, ms, ...a); const o = cur; return sI.call(W, function () { return run(o, fn, this, arguments); }, ms, ...a); };
+  if (rAF) W.requestAnimationFrame = function (fn) { const o = cur; return rAF.call(W, ts => run(o, fn, W, [ts])); };
+  // Event handlers: the same wrapped function is used for adding and removing, so removing still works.
+  const ET = EventTarget.prototype, add = ET.addEventListener, remove = ET.removeEventListener;
+  const wrapped = new WeakMap();
+  ET.addEventListener = function (type, fn, opts) {
+    if (typeof fn !== 'function') return add.call(this, type, fn, opts);
+    let w = wrapped.get(fn);
+    if (!w) { const o = cur; w = function () { return run(o, fn, this, arguments); }; wrapped.set(fn, w); }
+    return add.call(this, type, w, opts);
+  };
+  ET.removeEventListener = function (type, fn, opts) { return remove.call(this, type, (typeof fn === 'function' && wrapped.get(fn)) || fn, opts); };
+  // Frames per second, counted only while someone (Insider) is watching, so it costs nothing otherwise.
+  let watching = 0, frames = 0, fpsT = now(), fps = 0, loop = false;
+  function frame() { frames++; if (now() - watching < 4000) rAF.call(W, frame); else loop = false; }
+  // Delay: how late a timer that should run every 250 ms really runs (a busy or slowed-down page is late).
+  let lag = 0, lagT = now();
+  function probe() { const t = now(); lag = lag * .7 + Math.max(0, t - lagT - 250) * .3; lagT = t; if (now() - watching < 4000) sT.call(W, probe, 250); else probing = false; }
+  let probing = false;
+  return {
+    started,
+    /** Run fn as the window `owner` (used while a window builds itself). */
+    as(owner, appId, fn) { appOf.set(owner, appId); return run(owner, fn, null, []); },
+    watch() {
+      watching = now();
+      if (!loop) { loop = true; frames = 0; fpsT = now(); rAF.call(W, frame); }
+      if (!probing) { probing = true; lagT = now(); sT.call(W, probe, 250); }
+    },
+    fps() { const t = now(); if (t - fpsT >= 900) { fps = Math.round(frames * 1000 / (t - fpsT)); frames = 0; fpsT = t; } return fps; },
+    lag() { return Math.round(lag); },
+    totals() { const out = []; for (const [o, r] of use) out.push({ owner: o, app: o === 'sys' ? 'sys' : appOf.get(o), cpu: r.cpu, wake: r.wake }); return out; }
+  };
+})();
+
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1117,7 +1178,7 @@ const WM = {
       setTitle: t => { win.title = t || app.name; nameEl.textContent = win.title; el.setAttribute('aria-label', win.title); if (WM.active === win) WM.ribbon(); Bus.emit('wm'); },
       close: () => WM.close(win), focus: () => WM.focus(win), toast
     };
-    try { win.inst = app.build(ctx) || {}; }
+    try { win.inst = Meter.as('w' + id, appId, () => app.build(ctx)) || {}; }
     catch (e) { console.error(e); win.inst = {}; bodyEl.innerHTML = ''; bodyEl.append(h('div', { class: 'empty' }, h('div', { class: 'big', text: '⚠️' }), h('div', { text: app.name + ' hit a problem and could not start.' }), h('div', { class: 'small muted', text: String(e && e.message || e) }))); }
     this.wire(win, btnMin, btnMax, btnX);
     this.focus(win);
@@ -4088,9 +4149,164 @@ APPS.xapps = {
   }
 };
 
+/* ---- Insider: an XApp may ask (once, with your permission) how Quill.OS and this device are doing ----
+   The app sends parent.postMessage({ insider: 1, type: 'status' }, '*') and gets back
+   { insider: 1, type: 'status', data } — or { type: 'asking' } while you decide, or { type: 'denied' }.
+   It never gets your files, your account, window titles or anything inside other windows. */
+const Insider = {
+  prev: null,                 // the totals of the last answer, to work out what is happening now
+  battery: null, batteryWhy: '', levels: [],
+  media: new Map(),           // app id -> { ms, playing: Set of elements, since }
+  storage: null, storageT: 0,
+  asking: new Set(), lastAsk: {},
+  init() {
+    if (typeof navigator.getBattery === 'function') {
+      navigator.getBattery().then(b => {
+        this.battery = b;
+        const note = () => { this.levels.push([Date.now(), b.level, b.charging]); if (this.levels.length > 1000) this.levels.shift(); };
+        note(); b.addEventListener('levelchange', note); b.addEventListener('chargingchange', note);
+      }, () => { this.batteryWhy = 'This browser did not share the battery.'; });
+    } else this.batteryWhy = 'This browser does not tell web pages about the battery (Safari never does). Open Quill.OS in Chrome or Edge on a Mac to see it.';
+    // Sound and video count as work for the app that plays them.
+    const appOf = el => { const we = el.closest && el.closest('.win'); const w = we && WM.list.find(w => w.el === we); return w ? w.app : 'sys'; };
+    const media = id => { let m = this.media.get(id); if (!m) this.media.set(id, m = { ms: 0, playing: new Set(), since: 0 }); return m; };
+    const settle = m => { if (m.playing.size && m.since) m.ms += performance.now() - m.since; m.since = m.playing.size ? performance.now() : 0; };
+    document.addEventListener('play', e => { const m = media(appOf(e.target)); settle(m); m.playing.add(e.target); m.since = performance.now(); }, true);
+    for (const ev of ['pause', 'ended', 'emptied']) document.addEventListener(ev, e => { for (const m of this.media.values()) if (m.playing.has(e.target)) { settle(m); m.playing.delete(e.target); m.since = m.playing.size ? performance.now() : 0; } }, true);
+    window.addEventListener('message', e => this.onMessage(e));
+  },
+  onMessage(e) {
+    const m = e.data;
+    if (!m || typeof m !== 'object' || m.insider !== 1 || m.type !== 'status') return;
+    const w = WM.list.find(w => APPS[w.app] && APPS[w.app].xapp && w.body.querySelector('iframe') && w.body.querySelector('iframe').contentWindow === e.source);
+    if (!w) return;                                         // only XApps windows may ask
+    const id = w.app.slice(5), meta = S.xapps[id];
+    if (!meta) return;
+    const reply = d => { try { e.source.postMessage(Object.assign({ insider: 1 }, d), '*'); } catch (x) { } };
+    const answer = () => Meter.as('w' + w.id, w.app, () => reply({ type: 'status', data: this.snapshot() }));   // the work is the asking app's
+    if (meta.insider === true) return answer();
+    if (this.asking.has(id)) return reply({ type: 'asking' });
+    if (meta.insider === false && (!m.ask || Date.now() - (this.lastAsk[id] || 0) < 60000)) return reply({ type: 'denied' });
+    this.asking.add(id); this.lastAsk[id] = Date.now();
+    reply({ type: 'asking' });
+    Dlg.confirm({ title: 'Let “' + (meta.name || 'this app') + '” see how Quill.OS is doing?', text: 'It will see the processor, memory, storage and battery, the device type, and which apps are open and how much each one works. It will not see your files, your accounts or what is inside your windows.', ok: 'Allow' })
+      .then(yes => { meta.insider = !!yes; touch(); this.asking.delete(id); if (yes) answer(); else reply({ type: 'denied' }); });
+  },
+  device() {
+    const ua = navigator.userAgent, touchPts = navigator.maxTouchPoints || 0;
+    let kind = 'Computer', os = '', browser = 'Web browser', m;
+    if (/iPhone/.test(ua)) kind = 'iPhone';
+    else if (/iPad/.test(ua) || (/Macintosh/.test(ua) && touchPts > 1)) kind = 'iPad';
+    else if (/Macintosh|Mac OS X/.test(ua)) kind = 'Mac';
+    else if (/Android/.test(ua)) kind = /Mobile/.test(ua) ? 'Android phone' : 'Android tablet';
+    else if (/Windows/.test(ua)) kind = 'Windows PC';
+    else if (/CrOS/.test(ua)) kind = 'Chromebook';
+    else if (/Linux/.test(ua)) kind = 'Linux computer';
+    if ((m = ua.match(/OS (\d+)[_.](\d+)(?:[_.](\d+))? like Mac OS X/))) os = (kind === 'iPad' ? 'iPadOS ' : 'iOS ') + m[1] + '.' + m[2] + (m[3] ? '.' + m[3] : '');
+    else if (kind === 'iPad') os = 'iPadOS';
+    else if ((m = ua.match(/Mac OS X (\d+)[_.](\d+)(?:[_.](\d+))?/))) os = m[1] === '10' && m[2] === '15' ? 'macOS (the browser hides the exact version)' : 'macOS ' + m[1] + '.' + m[2];
+    else if ((m = ua.match(/Android ([\d.]+)/))) os = 'Android ' + m[1];
+    else if ((m = ua.match(/Windows NT ([\d.]+)/))) os = 'Windows' + (m[1] === '10.0' ? ' 10 or 11' : ' NT ' + m[1]);
+    else if (/CrOS/.test(ua)) os = 'ChromeOS';
+    else if (/Linux/.test(ua)) os = 'Linux';
+    if ((m = ua.match(/Edg(?:A|iOS)?\/(\d+)/))) browser = 'Edge ' + m[1];
+    else if ((m = ua.match(/CriOS\/(\d+)/))) browser = 'Chrome ' + m[1] + ' (uses Safari’s engine)';
+    else if ((m = ua.match(/FxiOS\/(\d+)/))) browser = 'Firefox ' + m[1] + ' (uses Safari’s engine)';
+    else if ((m = ua.match(/Firefox\/(\d+)/))) browser = 'Firefox ' + m[1];
+    else if ((m = ua.match(/(?:Chrome|Chromium)\/(\d+)/))) browser = 'Chrome ' + m[1];
+    else if ((m = ua.match(/Version\/([\d.]+).*Safari/))) browser = 'Safari ' + m[1];
+    const c = navigator.connection || null;
+    const mq = q => !!(window.matchMedia && matchMedia(q).matches);
+    return {
+      kind, os, browser, cores: navigator.hardwareConcurrency || null, deviceMemory: navigator.deviceMemory || null,
+      screen: { w: screen.width, h: screen.height, dpr: window.devicePixelRatio || 1, depth: screen.colorDepth || null },
+      viewport: { w: innerWidth, h: innerHeight },
+      orientation: (screen.orientation && screen.orientation.type) || (innerWidth >= innerHeight ? 'landscape' : 'portrait'),
+      touch: touchPts, language: navigator.language || '', timeZone: (Intl.DateTimeFormat().resolvedOptions().timeZone) || '',
+      online: navigator.onLine, connection: c ? { type: c.effectiveType || c.type || '', downlink: c.downlink == null ? null : c.downlink, rtt: c.rtt == null ? null : c.rtt, saveData: !!c.saveData } : null,
+      dark: mq('(prefers-color-scheme: dark)'), reducedMotion: mq('(prefers-reduced-motion: reduce)'),
+      standalone: mq('(display-mode: standalone)') || navigator.standalone === true, visible: document.visibilityState === 'visible'
+    };
+  },
+  batteryInfo() {
+    const b = this.battery;
+    if (!b) return { supported: false, why: this.batteryWhy || 'Checking the battery…' };
+    // How fast it drains: from the readings since it was last unplugged (at least 5 minutes and 1%).
+    let drain = null;
+    const L = this.levels;
+    if (!b.charging && L.length > 1) {
+      let i = L.length - 1; while (i > 0 && !L[i - 1][2]) i--;
+      const a = L[i], z = L[L.length - 1], hours = (Date.now() - a[0]) / 3600000;
+      if (hours >= 5 / 60 && a[1] - z[1] >= 0.01) drain = (a[1] - z[1]) * 100 / hours;
+    }
+    const fin = v => (Number.isFinite(v) && v > 0 ? v : null);
+    return { supported: true, level: b.level, charging: b.charging, chargingTime: fin(b.chargingTime), dischargingTime: fin(b.dischargingTime), drainPerHour: drain };
+  },
+  snapshot() {
+    Meter.watch();
+    const t = performance.now(), totals = Meter.totals();
+    const prev = this.prev; this.prev = { t, by: new Map(totals.map(x => [x.owner, x])) };
+    const dt = prev ? Math.max(0.25, (t - prev.t) / 1000) : 0;
+    const rows = new Map();
+    const row = id => {
+      let r = rows.get(id);
+      if (!r) {
+        const a = id === 'sys' ? null : APPS[id];
+        rows.set(id, r = { id, name: id === 'sys' ? 'Quill.OS (desktop, dock, clock)' : a ? a.name : 'Closed app', icon: id === 'sys' ? '✒' : a ? (String(a.icon || '').length <= 3 ? a.icon : '•') : '•',
+          state: id === 'sys' ? 'running' : 'closed', windows: 0, mem: 0, cpu: 0, wake: 0, cpuNow: 0, wakeNow: 0, mediaMs: 0, playing: false, sealed: !!(a && a.xapp) });
+      }
+      return r;
+    };
+    for (const x of totals) {
+      const r = row(x.app || 'sys');
+      r.cpu += x.cpu; r.wake += x.wake;
+      if (prev) { const p = prev.by.get(x.owner); r.cpuNow += (x.cpu - (p ? p.cpu : 0)) / dt / 10; r.wakeNow += (x.wake - (p ? p.wake : 0)) / dt; }
+    }
+    for (const [id, m] of this.media) { const r = row(id); r.mediaMs = this.mediaMs(m); r.playing = m.playing.size > 0; }
+    const rank = { front: 4, open: 3, 'other chapter': 2, minimised: 1, closed: 0 };
+    for (const w of WM.list) {
+      const r = row(w.app);
+      r.windows++;
+      const st = w.min ? 'minimised' : w.ch !== WM.ch ? 'other chapter' : WM.active === w ? 'front' : 'open';
+      if ((rank[st] || 0) > (rank[r.state] || 0)) r.state = st;
+      try { r.mem += w.inst && w.inst.mem ? Number(w.inst.mem()) || 0 : 120000; } catch (e) { r.mem += 120000; }
+    }
+    let cpuNow = 0, memEst = 4e6 + FS.usage() * 2;
+    const apps = [...rows.values()].map(r => {
+      // Energy: processor time, plus a little for every wake-up, plus playing sound or video.
+      r.energy = r.cpu + r.wake * 0.2 + r.mediaMs * 0.03;
+      r.energyNow = r.cpuNow + r.wakeNow * 0.02 + (r.playing ? 3 : 0);
+      cpuNow += r.cpuNow; memEst += r.mem;
+      return r;
+    });
+    const sum = apps.reduce((a, r) => a + r.energy, 0) || 1, sumNow = apps.reduce((a, r) => a + r.energyNow, 0) || 1;
+    for (const r of apps) { r.share = r.energy / sum * 100; r.shareNow = prev ? r.energyNow / sumNow * 100 : 0; }
+    apps.sort((a, b) => b.energy - a.energy);
+    if (!this.storage || Date.now() - this.storageT > 10000) {
+      this.storageT = Date.now();
+      if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(s => { this.storage = { usage: s.usage, quota: s.quota }; }, () => { });
+    }
+    const pm = performance.memory;
+    const dark = !/light/.test(getComputedStyle(document.documentElement).colorScheme || '');
+    return {
+      v: 1, time: Date.now(), first: !prev,
+      look: { dark, accent: S.set.accent || '#e8b04a' },
+      quill: { build: typeof BUILD_NAME === 'string' ? BUILD_NAME : 'Quill.OS', uptime: t - Meter.started, windows: WM.list.length, chapter: WM.ch + 1, storage: { used: FS.usage(), limit: STORE_LIMIT } },
+      cpu: { cores: navigator.hardwareConcurrency || null, quillNow: prev ? cpuNow : null, lag: Meter.lag(), fps: Meter.fps() },
+      memory: pm ? { source: 'browser', used: pm.usedJSHeapSize, limit: pm.jsHeapSizeLimit, total: pm.totalJSHeapSize } : { source: 'estimate', used: memEst, limit: null },
+      storage: this.storage,
+      battery: this.batteryInfo(),
+      device: this.device(),
+      apps
+    };
+  },
+  mediaMs(m) { return m.ms + (m.playing.size && m.since ? performance.now() - m.since : 0); }
+};
+Insider.init();
+
 /* ===================== Start-up ===================== */
 let NOSAVE = false;
-window.QOS = { Galau, XA, checkPassword, get S() { return S; }, set S(v) { S = v; }, WM, FS, APPS, Dlg, Ink, Lock, Spread, Panels, Menu, Bridge, Bus, notify, toast, calcEval, md, SH, Power, Open, runJS, highlight, normalizeState, get ME() { return ME; }, reloadUI, setupWizard };
+window.QOS = { Galau, XA, checkPassword, Meter, Insider, get S() { return S; }, set S(v) { S = v; }, WM, FS, APPS, Dlg, Ink, Lock, Spread, Panels, Menu, Bridge, Bus, notify, toast, calcEval, md, SH, Power, Open, runJS, highlight, normalizeState, get ME() { return ME; }, reloadUI, setupWizard };
 async function main() {
   Boot.show();
   const t0 = performance.now();
